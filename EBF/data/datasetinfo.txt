@@ -1,0 +1,6 @@
+Experiment on EBF dataset
+Using the smooth way.
+The minimum and maximum are 0.039 and 67.984
+EBF: The train data are: 17777
+EBF: The positive test data are: 2276
+EBF: The negative test data are: 2167
