@@ -53,7 +53,7 @@ def main():
         device = torch.device("cpu")
     f = open(osp.join(args.checkpoint, 'record.txt'), 'w')
     f.write('RMSE\tPR\n')
-    motifLen = 16
+    motifLen = 12
     Data = np.load(osp.join(args.data_dir, '%s_test.npz' % args.name))
     seqs, signals = Data['data'], Data['signal']
     test_data = EPIDataSet(seqs, signals)
@@ -64,7 +64,7 @@ def main():
     neg_data = EPIDataSet(seqs, signals)
     neg_loader = DataLoader(neg_data, batch_size=1, shuffle=False, num_workers=0)
     # Load weights
-    checkpoint_file = osp.join(args.checkpoint, 'model_best.pth')
+    checkpoint_file = osp.join(args.checkpoint, 'model_best_ebf.pth')
     chk = torch.load(checkpoint_file, map_location=device)
     state_dict = chk['model_state_dict']
     model = FCNsignal(motiflen=motifLen)

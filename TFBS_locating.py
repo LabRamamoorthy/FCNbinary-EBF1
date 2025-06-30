@@ -216,7 +216,7 @@ def main():
     # Load weights
     chk = torch.load(model_file, map_location=device)
     state_dict = chk['model_state_dict']
-    model = FCNsignal(motiflen=16)
+    model = FCNsignal(motiflen=12)
     model.load_state_dict(state_dict)
     model.to(device)
     parameters = {'Window': window, 'Name': name, 'Threshold': threshold, 'Device': device}

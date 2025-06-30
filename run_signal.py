@@ -8,7 +8,7 @@ import numpy as np
 import os.path as osp
 from hyperopt import hp
 from hyperopt.pyll.stochastic import sample
-
+import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -100,6 +100,7 @@ def main():
     val_loader = DataLoader(val_data, batch_size=1, shuffle=False, num_workers=0)
     rmse_lowest = 10000
     pr_best = 0
+    best_params = None
     for trial in range(15):
         params = randomparams()
         model = FCNsignal(motiflen=motifLen)
@@ -120,10 +121,17 @@ def main():
         if rmse_lowest > rmse:
             rmse_lowest = rmse
             pr_best = pr
+            best_params = params 
             checkpoint_file = osp.join(args.checkpoint, 'model_best_ebf.pth')
             torch.save({
                 'model_state_dict': state_dict
             }, checkpoint_file)
+
+    if best_params is not None:
+        param_path = osp.join(args.checkpoint, 'best_params.json')
+        with open(param_path, 'w') as f:
+            json.dump(best_params, f, indent=2)
+        print(f"Best params saved to {param_path}")
 
 
 if __name__ == "__main__":
