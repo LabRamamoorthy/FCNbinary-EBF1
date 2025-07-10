@@ -24,11 +24,11 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 def randomparams():
     space = {
-        'lr': hp.choice('lr', (0.001, 0.0001)),
-        'beta1': hp.choice('beta1', (0.9, 0.99, 0.999)),
-        'beta2': hp.choice('beta2', (0.9, 0.99, 0.999)),
-        'weight': hp.choice('weight', (0, 0.001))
-    }
+  "beta1": 0.9,
+  "beta2": 0.99,
+  "lr": 0.001,
+  "weight": 0
+}
     params = sample(space)
 
     return params
@@ -68,6 +68,12 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
+    # Create checkpoint directory if it does not exist
+    if not osp.exists(args.checkpoint):
+        os.makedirs(args.checkpoint)
+        print(f"Created checkpoint directory: {args.checkpoint}")
+
+
     if args.gpu == '-1':
         device = torch.device("cpu")
         print("Using CPU for training.")
@@ -101,7 +107,7 @@ def main():
     rmse_lowest = 10000
     pr_best = 0
     best_params = None
-    for trial in range(15):
+    for trial in range(1):
         params = randomparams()
         model = FCNsignal(motiflen=motifLen)
         optimizer = optim.Adam(model.parameters(), lr=params['lr'], betas=(params['beta1'], params['beta2']), weight_decay=params['weight'])
