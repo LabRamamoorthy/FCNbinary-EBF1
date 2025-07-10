@@ -215,7 +215,5 @@ def main():
     print("{}: The train data are: {}".format(name, len(seqs_total)))
     print("{}: The positive test data are: {}".format(name, len(seqs_te)))
     print("{}: The negative test data are: {}\n".format(name, len(seqs_neg_te)))
-    #
-
 
 if __name__ == '__main__':  main()
