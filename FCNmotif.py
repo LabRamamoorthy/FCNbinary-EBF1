@@ -11,11 +11,15 @@ def upsample(x, out_size):
     return F.interpolate(x, size=out_size, mode='nearest')
 
 
-def bn_relu_conv(in_, out_, kernel_size=3, stride=1, bias=False, groups=1):
+def bn_elu_conv(in_, out_, kernel_size=3, stride=1, bias=False, groups=1):
     padding = kernel_size // 2
     return nn.Sequential(nn.BatchNorm1d(in_),
-                         nn.ReLU(inplace=True),
+                         nn.ELU(alpha=0.1, inplace=True),
                          nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, groups=groups))
+                        
+def conv_only(in_, out_, kernel_size=3, stride=1, bias=True, groups=1):
+    padding = kernel_size // 2
+    return nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, groups=groups)
 
 class Attention(nn.Module):
     def __init__(self, input_dim):
@@ -46,13 +50,13 @@ class FCNsignalMod(nn.Module):
         self.gru1 = nn.GRU(64, 64, batch_first=True)
         self.gru2 = nn.GRU(64, 64, batch_first=True)
         self.attention = Attention(input_dim=128)
-        self.blend4 = bn_relu_conv(256, 64, kernel_size=3)
-        self.blend3 = bn_relu_conv(64, 64, kernel_size=3)
-        self.blend2 = bn_relu_conv(64, 64, kernel_size=3)
-        self.blend1 = bn_relu_conv(64, 1, kernel_size=3)
+        self.blend4 = bn_elu_conv(256, 64, kernel_size=3)
+        self.blend3 = bn_elu_conv(64, 64, kernel_size=3)
+        self.blend2 = bn_elu_conv(64, 64, kernel_size=3)
+        self.blend1 = conv_only(64, 1, kernel_size=3)
         # general functions
-        self.relu = nn.ELU(alpha=0.1, inplace=True)
-        self.dropout = nn.Dropout(p=0.3)
+        self.elu = nn.ELU(alpha=0.1, inplace=True)
+        self.dropout = nn.Dropout(p=0.2)
         self._init_weights()
 
     def _init_weights(self):
@@ -71,19 +75,19 @@ class FCNsignalMod(nn.Module):
         # encoding
         skip1 = data
         out1 = self.conv1(data)
-        out1 = self.relu(out1)
+        out1 = self.elu(out1)
         out1 = self.pool1(out1)
         out1 = self.dropout(out1)
         skip2 = out1
         res2 = out1
         out1 = self.conv2(out1)
-        out1 = self.relu(out1 + res2)
+        out1 = self.elu(out1 + res2)
         out1 = self.pool2(out1)
         out1 = self.dropout(out1)
         skip3 = out1
         res3 = out1
         out1 = self.conv3(out1)
-        out1 = self.relu(out1 + res3)
+        out1 = self.elu(out1 + res3)
         out1 = self.pool3(out1)
         out1 = self.dropout(out1)
         out1 = out1.permute(0, 2, 1)  # [B, L, C]
@@ -104,5 +108,6 @@ class FCNsignalMod(nn.Module):
         up2 = self.blend2(up2)
         up1 = upsample(up2, skip1.size()[-1])
         out_dense = self.blend1(up1)
-        # return out_dense.squeeze(1)
-        return F.relu(out_dense.squeeze(1)) + 1e-5
+        return out_dense.squeeze(1)
+       
+
