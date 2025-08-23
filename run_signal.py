@@ -15,7 +15,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 # custom functions defined by user
-from FCNmotif import FCNA, FCNsignal, BPNet
+from VanillaFCNmotif import FCNA, FCNsignal, BPNet
+from FCNmotif import FCNsignalMod
 from datasets import EPIDataSet
 from trainer import Trainer
 from loss import NormalLoss
@@ -24,11 +25,11 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 def randomparams():
     space = {
-  "beta1": 0.9,
-  "beta2": 0.99,
-  "lr": 0.001,
-  "weight": 0
-}
+        'lr': hp.choice('lr', (0.001, 0.0001)),
+        'beta1': hp.choice('beta1', (0.9, 0.99, 0.999)),
+        'beta2': hp.choice('beta2', (0.9, 0.99, 0.999)),
+        'weight': hp.choice('weight', (0, 0.001))
+    }
     params = sample(space)
 
     return params
@@ -109,8 +110,9 @@ def main():
     best_params = None
     for trial in range(1):
         params = randomparams()
-        model = FCNsignal(motiflen=motifLen)
+        model = FCNsignalMod(motiflen=motifLen, n_features=2)
         optimizer = optim.Adam(model.parameters(), lr=params['lr'], betas=(params['beta1'], params['beta2']), weight_decay=params['weight'])
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
         criterion = NormalLoss()
         executor = Trainer(model=model,

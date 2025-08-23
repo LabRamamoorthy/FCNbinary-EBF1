@@ -19,4 +19,3 @@ class NormalLoss(nn.Module):
         loss = self.criteria(prediction, target)
         return loss
 
-

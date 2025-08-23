@@ -1,4 +1,3 @@
-RMSE	PR
-0.009	0.836
-AUC	PRAUC
-0.961	0.967
+Set	RMSE	Pearson	PSL
+test	0.009	0.836	0.930
+neg	0.001	nan	0.636

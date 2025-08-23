@@ -112,9 +112,9 @@ class Trainer(object):
     
     def plot_results(self):
         # --- Plot Training and Validation Loss ---
-        plt.figure(figsize=(8, 5))  # Same size as your reference
+        plt.figure(figsize=(8, 5))
         plt.plot(self.train_losses, label='Training Loss', color='blue')
-        plt.plot(self.val_rmse, label='Validation Loss', color='orange')
+        plt.plot(self.val_rmse, label='Validation RMSE', color='orange')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.title('Training and Validation Loss Curve')
@@ -123,27 +123,33 @@ class Trainer(object):
         plt.savefig(osp.join(self.checkpoint, 'loss_curve.png'))
         plt.close()
 
-        # --- Plot true vs predicted signals (3 examples each) ---
-        def plot_signals(truths, preds, title, filename):
-            for i in range(min(10, len(preds))):  # Plot up to 10 samples
-                x = truths[i]
-                y = preds[i]
-                # Compute Pearson r safely
+        # --- Plot true vs predicted signals (up to 10 samples) ---
+        def plot_signals(truth_batches, pred_batches, title, filename):
+            all_truths = np.concatenate([t.reshape(-1, t.shape[-1]) for t in truth_batches], axis=0)
+            all_preds = np.concatenate([p.reshape(-1, p.shape[-1]) for p in pred_batches], axis=0)
+            num_samples = min(10, len(all_truths))
+
+            for i in range(num_samples):
+                x = all_truths[i]
+                y = all_preds[i]
+
                 if np.std(x) == 0 or np.std(y) == 0:
                     pr_val = np.nan
                 else:
                     pr_val = pearsonr(x, y)[0]
-                
+
                 plt.figure(figsize=(10, 3))
                 plt.plot(x, label='True Signal', color='black')
                 plt.plot(y, label='Predicted Signal', color='orange')
                 plt.xlabel('Position')
                 plt.ylabel('Signal')
-                plt.title(f'{title} Example {i+1} - Pearson r: {pr_val:.3f}')
+                plt.title(f'{title} Sample {i+1} - Pearson r: {pr_val:.3f}')
                 plt.legend()
                 plt.tight_layout()
                 plt.savefig(osp.join(self.checkpoint, f'{filename}_{i+1}.png'))
                 plt.close()
 
+        # Plot for final epoch
         plot_signals(self.train_truths, self.train_preds, "Train", "train_true_vs_pred")
         plot_signals(self.val_truths, self.val_preds, "Validation", "val_true_vs_pred")
+

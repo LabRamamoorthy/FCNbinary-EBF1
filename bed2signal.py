@@ -63,7 +63,7 @@ def pos_location(chrom, start, end):
     else:
         start_update = start
 
-    start_update += np.random.randint(-100, 100)
+    start_update += np.random.randint(-300, 300)
     end_update = start_update + SEQ_LEN
     if end_update > CHROM[chrom]:
         end_update = CHROM[chrom]
@@ -223,7 +223,7 @@ def main():
     random.seed(params.seed)
     name = params.name
     data_dir = params.dir
-    out_dir = osp.join(params.dir, 'data_with_features')
+    out_dir = osp.join(params.dir, 'data_morernd_features')
     if not osp.exists(out_dir):
         os.mkdir(out_dir)
     sequence_dict = SeqIO.to_dict(SeqIO.parse(open('Genome/mm9.fa'), 'fasta'))

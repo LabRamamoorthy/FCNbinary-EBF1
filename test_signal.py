@@ -61,7 +61,7 @@ def main():
     model.to(device)
     model.eval()
 
-    for set_type in ['test']:   #, 'neg'
+    for set_type in ['test', 'neg']:   
         Data = np.load(osp.join(args.data_dir, f'{args.name}_{set_type}.npz'))
         seqs, signals = Data['data'], Data['signal']
         dataset = EPIDataSet(seqs, signals)
