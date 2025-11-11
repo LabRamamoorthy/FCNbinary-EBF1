@@ -1,80 +1,93 @@
-#!/usr/bin/python
-
 import os
 import sys
 import argparse
 import random
+import json
 import numpy as np
 import os.path as osp
-from hyperopt import hp
-from hyperopt.pyll.stochastic import sample
-import json
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# custom functions defined by user
+from hyperopt import hp
+from hyperopt.pyll.stochastic import sample
+
+# custom modules
 from VanillaFCNmotif import FCNA, FCNsignal, BPNet
 from FCNmotif import FCNsignalMod
 from datasets import EPIDataSet
 from trainer import Trainer
-from loss import NormalLoss
+from loss import BinaryLoss
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 def randomparams():
+    """Sample random hyperparameters."""
     space = {
-        'lr': hp.choice('lr', (0.001, 0.0001)),
-        'beta1': hp.choice('beta1', (0.9, 0.99, 0.999)),
-        'beta2': hp.choice('beta2', (0.9, 0.99, 0.999)),
-        'weight': hp.choice('weight', (0, 0.001))
+        "beta1": 0.9,
+        "beta2": 0.99,
+        "lr": 0.001,
+        "weight": 0.001,
     }
     params = sample(space)
-
     return params
 
 
 def get_args():
-    """Parse all the arguments.
+    """Parse all the arguments."""
+    parser = argparse.ArgumentParser(
+        description="FCNsignal for predicting base-resolution binding signals"
+    )
 
-        Returns:
-          A list of parsed arguments.
-    """
-    parser = argparse.ArgumentParser(description="FCNsignal for predicting base-resolution binding signals")
-
-    parser.add_argument("-d", dest="data_dir", type=str, default=None,
-                        help="A directory containing the training data.")
-    parser.add_argument("-n", dest="name", type=str, default=None,
-                        help="The name of a specified data.")
-
-    parser.add_argument("-g", dest="gpu", type=str, default='0',
-                        help="choose GPU device. Use '-1' for CPU. e.g. '0,1'")
-    parser.add_argument("-s", dest="seed", type=int, default=5,
-                        help="Random seed to have reproducible results.")
-    # Arguments for Adam optimization
-    parser.add_argument("-b", dest="batch_size", type=int, default=500,
-                        help="Number of sequences sent to the network in one step.")
-    parser.add_argument("-e", dest="max_epoch", type=int, default=50,
-                        help="Number of training steps.")
-    parser.add_argument("-c", dest="checkpoint", type=str, default='./models/',
-                        help="Where to save snapshots of the model.")
-
+    parser.add_argument(
+        "-d", dest="data_dir", type=str, required=True,
+        help="Directory containing training data (.npz files)."
+    )
+    parser.add_argument(
+        "-n", dest="name", type=str, required=True,
+        help="Dataset name (used to locate '<name>_train.npz')."
+    )
+    parser.add_argument(
+        "-g", dest="gpu", type=str, default='0',
+        help="Choose GPU device. Use '-1' for CPU. E.g., '0,1'."
+    )
+    parser.add_argument(
+        "-s", dest="seed", type=int, default=5,
+        help="Random seed for reproducibility."
+    )
+    parser.add_argument(
+        "-b", dest="batch_size", type=int, default=500,
+        help="Batch size for training."
+    )
+    parser.add_argument(
+        "-e", dest="max_epoch", type=int, default=50,
+        help="Number of training epochs."
+    )
+    parser.add_argument(
+        "-c", dest="checkpoint", type=str, default='./models/',
+        help="Directory to save model checkpoints and outputs."
+    )
     return parser.parse_args()
 
 
 def main():
     """Create the model and start the training."""
     args = get_args()
+
+    # Reproducibility
     random.seed(args.seed)
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    # Create checkpoint directory if it does not exist
+    # Checkpoint directory
     if not osp.exists(args.checkpoint):
         os.makedirs(args.checkpoint)
         print(f"Created checkpoint directory: {args.checkpoint}")
 
-
+    # Device setup
     if args.gpu == '-1':
         device = torch.device("cpu")
         print("Using CPU for training.")
@@ -87,54 +100,85 @@ def main():
         else:
             print("CUDA not available. Falling back to CPU.")
             device = torch.device("cpu")
+
     motifLen = 12
-    Data = np.load(osp.join(args.data_dir, '%s_train.npz' % args.name))
+
+    # Load data
+    data_path = osp.join(args.data_dir, f'{args.name}_train.npz')
+    if not osp.exists(data_path):
+        raise FileNotFoundError(f"Dataset not found: {data_path}")
+
+    Data = np.load(data_path)
     seqs, signals = Data['data'], Data['signal']
+
+    # Split into train/validation
     ratio = 0.1
-    number_t = int(len(seqs) * ratio)
-    index = list(range(len(seqs)))
-    index_val = random.sample(index, number_t)
-    index_train = list(set(index) - set(index_val))
-    # build training data generator
-    data_tr = seqs[index_train]
-    signal_tr = signals[index_train]
+    n_val = int(len(seqs) * ratio)
+    indices = list(range(len(seqs)))
+    index_val = random.sample(indices, n_val)
+    index_train = list(set(indices) - set(index_val))
+
+    # Training data
+    data_tr, signal_tr = seqs[index_train], signals[index_train]
     train_data = EPIDataSet(data_tr, signal_tr)
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    # build val data generator
-    data_va = seqs[index_val]
-    signal_va = signals[index_val]
+    train_loader = DataLoader(
+        train_data, batch_size=args.batch_size, shuffle=True, num_workers=0
+    )
+
+    # Validation data
+    data_va, signal_va = seqs[index_val], signals[index_val]
     val_data = EPIDataSet(data_va, signal_va)
-    val_loader = DataLoader(val_data, batch_size=1, shuffle=False, num_workers=0)
-    rmse_lowest = 10000
-    pr_best = 0
+    val_loader = DataLoader(
+        val_data, batch_size=1, shuffle=False, num_workers=0
+    )
+
+    best_f1_score = 0
     best_params = None
+
     for trial in range(1):
         params = randomparams()
-        model = FCNsignalMod(motiflen=motifLen, n_features=2)
-        optimizer = optim.Adam(model.parameters(), lr=params['lr'], betas=(params['beta1'], params['beta2']), weight_decay=params['weight'])
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        print(f"Trial {trial + 1} params: {params}")
+
+        # Model
+        model = FCNsignalMod(motiflen=motifLen, n_features=0)
+
+        # Optimizer & Scheduler
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=params['lr'],
+            betas=(params['beta1'], params['beta2']),
+            weight_decay=params['weight']
+        )
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
-        criterion = NormalLoss()
-        executor = Trainer(model=model,
-                           optimizer=optimizer,
-                           criterion=criterion,
-                           device=device,
-                           checkpoint=args.checkpoint,
-                           max_epoch=args.max_epoch,
-                           train_loader=train_loader,
-                           test_loader=val_loader,
-                           scheduler=scheduler)
 
-        rmse, pr, state_dict = executor.train()
-        if rmse_lowest > rmse:
-            rmse_lowest = rmse
-            pr_best = pr
-            best_params = params 
+        # Criterion with class imbalance handling
+        executor = Trainer(
+            model=model,
+            optimizer=optimizer,
+            criterion=nn.BCEWithLogitsLoss(),
+            device=device,
+            checkpoint=args.checkpoint,
+            max_epoch=args.max_epoch,
+            train_loader=train_loader,
+            test_loader=val_loader,
+            scheduler=scheduler,
+        )
+
+        pos_weight = executor.compute_pos_weight()
+        executor.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+        # Train
+        best_f1, state_dict = executor.train()
+
+        # Save best model
+        if best_f1 > best_f1_score:
+            best_f1_score = best_f1
+            best_params = params
             checkpoint_file = osp.join(args.checkpoint, 'model_best_ebf.pth')
-            torch.save({
-                'model_state_dict': state_dict
-            }, checkpoint_file)
+            torch.save({'model_state_dict': state_dict}, checkpoint_file)
+            print(f"Best model saved to {checkpoint_file}")
 
+    # Save best params
     if best_params is not None:
         param_path = osp.join(args.checkpoint, 'best_params.json')
         with open(param_path, 'w') as f:
@@ -144,4 +188,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

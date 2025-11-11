@@ -1,66 +1,75 @@
-# -*- coding: utf8 -*-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import numpy as np
-import sys
-
-
+# Helper functions
 def upsample(x, out_size):
-    return F.interpolate(x, size=out_size, mode='nearest')
+    return F.interpolate(x, size=out_size, mode='linear', align_corners=False)
 
 
-def bn_elu_conv(in_, out_, kernel_size=3, stride=1, bias=False, groups=1):
+def bn_act_conv(in_, out_, kernel_size=3, stride=1, bias=False, act=nn.GELU):
     padding = kernel_size // 2
-    return nn.Sequential(nn.BatchNorm1d(in_),
-                         nn.ELU(alpha=0.1, inplace=True),
-                         nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, groups=groups))
-                        
-def conv_only(in_, out_, kernel_size=3, stride=1, bias=True, groups=1):
-    padding = kernel_size // 2
-    return nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias, groups=groups)
+    return nn.Sequential(
+        nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias),
+        nn.BatchNorm1d(out_),
+        act()
+    )
 
+
+def conv_only(in_, out_, kernel_size=3, stride=1, bias=True):
+    padding = kernel_size // 2
+    return nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
+
+# Attention module
 class Attention(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, hidden_dim=16):
         super().__init__()
         self.attn = nn.Sequential(
-            nn.Linear(input_dim, 64),
+            nn.Linear(input_dim, hidden_dim),
             nn.Tanh(),
-            nn.Linear(64, 1)
+            nn.Linear(hidden_dim, 1)
         )
 
-    def forward(self, x):  # x: [B, L, C]
-        weights = torch.softmax(self.attn(x), dim=1)  # [B, L, 1]
-        return (x * weights).sum(dim=1), weights
+    def forward(self, x):
+        # x: [B, L, C]
+        weights = torch.sigmoid(self.attn(x))
+        weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-6)
+        return x * weights, weights
 
 class FCNsignalMod(nn.Module):
-    """FCNsignal for predicting base-resolution binding signals"""
-    def __init__(self, motiflen=12, n_features=0):
-        super(FCNsignalMod, self).__init__()
-        self.n_features = n_features
-         # encoding
-        self.conv1 = nn.Conv1d(4 + self.n_features, 64, kernel_size=motiflen, padding=motiflen // 2)
-        self.pool1 = nn.MaxPool1d(4, stride=4)
-        self.conv2 = nn.Conv1d(64, 64, kernel_size=7, padding=3)
-        self.pool2 = nn.MaxPool1d(4, stride=4)
-        self.conv3 = nn.Conv1d(64, 64, kernel_size=5, padding=2)
-        self.pool3 = nn.MaxPool1d(4, stride=4)
-        # decoding
-        self.gru1 = nn.GRU(64, 64, batch_first=True)
-        self.gru2 = nn.GRU(64, 64, batch_first=True)
-        self.attention = Attention(input_dim=128)
-        self.blend4 = bn_elu_conv(256, 64, kernel_size=3)
-        self.blend3 = bn_elu_conv(64, 64, kernel_size=3)
-        self.blend2 = bn_elu_conv(64, 64, kernel_size=3)
-        self.blend1 = conv_only(64, 1, kernel_size=3)
-        # general functions
-        self.elu = nn.ELU(alpha=0.1, inplace=True)
-        self.dropout = nn.Dropout(p=0.2)
+    def __init__(self, motiflen=12, n_features=0, dropout=0.2):
+        super().__init__()
+
+        in_ch = 4  # DNA one-hot
+        self.has_extra = n_features > 0
+
+        # Project extra features to 32 channels if present
+        if self.has_extra:
+            self.feature_proj = nn.Conv1d(n_features, 32, kernel_size=1)
+            in_ch += 32
+
+        # Encoder
+        self.conv1 = bn_act_conv(in_ch, 32, kernel_size=motiflen)
+        self.pool1 = nn.MaxPool1d(2)
+        self.conv2 = bn_act_conv(32, 32, kernel_size=7)
+        self.pool2 = nn.MaxPool1d(2)
+
+        # GRU + Attention
+        self.gru_hidden = 48
+        self.gru = nn.GRU(32, self.gru_hidden, batch_first=True, bidirectional=True)
+        self.attention = Attention(input_dim=self.gru_hidden * 2, hidden_dim=16)
+
+        # Decoder / blending
+        self.blend2 = bn_act_conv(self.gru_hidden * 2, 32)
+        self.blend1 = conv_only(32, 1)
+
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+        # Initialize weights
         self._init_weights()
 
     def _init_weights(self):
-        """Initialize the new built layers"""
         for layer in self.modules():
             if isinstance(layer, (nn.Conv1d, nn.Linear)):
                 nn.init.xavier_uniform_(layer.weight)
@@ -70,44 +79,35 @@ class FCNsignalMod(nn.Module):
                 nn.init.constant_(layer.weight, 1)
                 nn.init.constant_(layer.bias, 0)
 
-    def forward(self, data):
-        """Construct a new computation graph at each froward"""
-        # encoding
-        skip1 = data
-        out1 = self.conv1(data)
-        out1 = self.elu(out1)
-        out1 = self.pool1(out1)
-        out1 = self.dropout(out1)
-        skip2 = out1
-        res2 = out1
-        out1 = self.conv2(out1)
-        out1 = self.elu(out1 + res2)
-        out1 = self.pool2(out1)
-        out1 = self.dropout(out1)
-        skip3 = out1
-        res3 = out1
-        out1 = self.conv3(out1)
-        out1 = self.elu(out1 + res3)
-        out1 = self.pool3(out1)
-        out1 = self.dropout(out1)
-        out1 = out1.permute(0, 2, 1)  # [B, L, C]
-        out1_1, _ = self.gru1(out1)
-        out1_2, _ = self.gru2(torch.flip(out1, [1]))
-        out1_2 = torch.flip(out1_2, [1])
-        out1 = torch.cat([out1_1, out1_2], dim=-1)  # [B, L, 128]
-        out_attn, _ = self.attention(out1)  # [B, 128]
-        out1 = out1.permute(0, 2, 1)  # [B, 128, L]
-        skip4 = out1
-        # decoding
-        up4 = upsample(out_attn.unsqueeze(-1), skip4.size(-1)).expand_as(skip4)
-        up4 = torch.cat([up4, skip4], dim=1)
-        up4 = self.blend4(up4)
-        up3 = upsample(up4, skip3.size()[-1]) + skip3
-        up3 = self.blend3(up3)
-        up2 = upsample(up3, skip2.size()[-1]) + skip2
-        up2 = self.blend2(up2)
-        up1 = upsample(up2, skip1.size()[-1])
-        out_dense = self.blend1(up1)
-        return out_dense.squeeze(1)
-       
+    def forward(self, x):
+        # x: [B, C, L] (C = 4 or 4 + n_features)
+        if self.has_extra:
+            extra = self.feature_proj(x[:, 4:, :])  # project extra features
+            x = torch.cat([x[:, :4, :], extra], dim=1)
+
+        skip1 = x
+        out = self.conv1(x)
+        out = self.pool1(out)
+        out = self.dropout(out)
+
+        skip2 = out
+        out = self.conv2(out)
+        if out.size(1) == skip2.size(1):  # safe skip connection
+            out = out + skip2
+        out = self.pool2(out)
+        out = self.dropout(out)
+
+        # GRU + Attention
+        out = out.permute(0, 2, 1)  # [B, L, C]
+        out, _ = self.gru(out)
+        out, _ = self.attention(out)
+        out = out.permute(0, 2, 1)  # [B, C, L]
+
+        # Decoder
+        out = upsample(out, skip2.size(-1))
+        out = self.blend2(out)
+        out = upsample(out, skip1.size(-1))
+        out = self.blend1(out)
+
+        return out.squeeze(1)  # [B, L]
 

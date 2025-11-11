@@ -207,6 +207,72 @@ def extract_additional_features(bed_lines, feature_files, location_func):
     all_feats = np.transpose(all_feats, (1, 0, 2))  # [N, F, SEQ_LEN]
     return all_feats
 
+def save_peak_signals_separate(seqs_bed, signal_file, out_file, smooth=SMOOTH, window=WINDOW, offset=OFFSET):
+    """
+    Save per-peak signals (positive and negative) to a separate TSV file.
+    Ensures the coordinates and signal lengths match what is used in .npz files.
+    """
+    with open(seqs_bed) as f_in, open(out_file, 'w') as f_out:
+        f_out.write('peak_type\tchrom\tstart\tend\traw_signal\tsmoothed_norm_signal\n')
+
+        for line in f_in:
+            chrom, start_s, end_s = line.strip().split()[:3]
+            start, end = int(start_s), int(end_s)
+
+            if chrom not in CHROM:
+                continue
+
+            # ---------------- Positive peak ----------------
+            start_p, end_p = pos_location(chrom, start, end)
+            start_p = max(0, start_p)
+            end_p = min(end_p, CHROM[chrom])
+            if end_p <= start_p:
+                continue
+
+            raw_signal = GetbigWig(signal_file, chrom, start_p, end_p)
+            raw_signal[np.isnan(raw_signal)] = 0.
+            if smooth:
+                raw_signal_smooth = Smoothavg(raw_signal, window)
+            else:
+                raw_signal_smooth = raw_signal
+
+            # pad/crop to SEQ_LEN
+            if len(raw_signal_smooth) < SEQ_LEN:
+                raw_signal_smooth = np.pad(raw_signal_smooth, (0, SEQ_LEN - len(raw_signal_smooth)), mode='constant')
+            elif len(raw_signal_smooth) > SEQ_LEN:
+                raw_signal_smooth = raw_signal_smooth[:SEQ_LEN]
+
+            smoothed_norm = np.log10(1 + raw_signal_smooth)
+            raw_str = ','.join([f'{x:.4f}' for x in raw_signal])
+            smooth_str = ','.join([f'{x:.4f}' for x in smoothed_norm])
+            f_out.write(f'pos\t{chrom}\t{start_p}\t{end_p}\t{raw_str}\t{smooth_str}\n')
+
+            # ---------------- Negative peak ----------------
+            start_n, end_n = neg_location(chrom, start, end)
+            start_n = max(0, start_n)
+            end_n = min(end_n, CHROM[chrom])
+            if end_n <= start_n:
+                continue
+
+            raw_signal_n = GetbigWig(signal_file, chrom, start_n, end_n)
+            raw_signal_n[np.isnan(raw_signal_n)] = 0.
+            if smooth:
+                raw_signal_smooth_n = Smoothavg(raw_signal_n, window)
+            else:
+                raw_signal_smooth_n = raw_signal_n
+
+            # pad/crop to SEQ_LEN
+            if len(raw_signal_smooth_n) < SEQ_LEN:
+                raw_signal_smooth_n = np.pad(raw_signal_smooth_n, (0, SEQ_LEN - len(raw_signal_smooth_n)), mode='constant')
+            elif len(raw_signal_smooth_n) > SEQ_LEN:
+                raw_signal_smooth_n = raw_signal_smooth_n[:SEQ_LEN]
+
+            smoothed_norm_n = np.log10(1 + raw_signal_smooth_n)
+            raw_str_n = ','.join([f'{x:.4f}' for x in raw_signal_n])
+            smooth_str_n = ','.join([f'{x:.4f}' for x in smoothed_norm_n])
+            f_out.write(f'neg\t{chrom}\t{start_n}\t{end_n}\t{raw_str_n}\t{smooth_str_n}\n')
+
+
 
 
 def get_args():
@@ -214,8 +280,10 @@ def get_args():
     parser.add_argument("-d", dest="dir", type=str, default='')
     parser.add_argument("-n", dest="name", type=str, default='')
     parser.add_argument("-s", dest="seed", type=int, default=666, help="Random seed to have reproducible results.")
-
+    parser.add_argument("--threshold", dest="thresh", type=float, default=0.2,
+                        help="Threshold for binary classification of signal after log10 normalization.")
     return parser.parse_args()
+
 
 
 def main():
@@ -223,25 +291,42 @@ def main():
     random.seed(params.seed)
     name = params.name
     data_dir = params.dir
-    out_dir = osp.join(params.dir, 'data_morernd_features')
+    out_dir = osp.join(data_dir, 'data_binary_WT2_features')
     if not osp.exists(out_dir):
         os.mkdir(out_dir)
+        
     sequence_dict = SeqIO.to_dict(SeqIO.parse(open('Genome/mm9.fa'), 'fasta'))
     print('Experiment on %s dataset' % name)
-    seqs_bed = data_dir + '/thresholded.bed'
-    pvalue_file = data_dir + '/p-value.bw'
+
+    seqs_bed = osp.join(data_dir, 'WT2_0based.bed')
+    pvalue_file = osp.join(data_dir, 'p-value.bw')
+    out_file = osp.join(data_dir, 'peak_signals.tsv')
+    save_peak_signals_separate(seqs_bed, pvalue_file, out_file)
+    
+    # Uncomment or leave empty if no extra features
     additional_feature_files = [
-        data_dir + '/histone_marks.bw',
-        data_dir + '/ATAC2.bw'
+        osp.join(data_dir, 'histone_marks.bw'),
+        osp.join(data_dir, 'ATAC2.bw')
     ]
-    seqs, signals, max_neg, additional_feats = get_data_local(seqs_bed, sequence_dict, pvalue_file, additional_feature_files=additional_feature_files)
-    signals = np.log10(1+signals)
-    if additional_feats is not None:
+    # additional_feature_files = []  
+
+    # ----- Positive samples -----
+    seqs, signals, max_neg, additional_feats = get_data_local(
+        seqs_bed, sequence_dict, pvalue_file, additional_feature_files=additional_feature_files
+    )
+
+    # Log + threshold
+    signals = np.log10(1 + signals)
+    signals = (signals >= params.thresh).astype(np.int8)
+
+    if additional_feats is not None and len(additional_feats) > 0:
         print("seqs shape:", seqs.shape)
-        print("additional_feats shape:", additional_feats.shape)  
+        print("additional_feats shape:", additional_feats.shape)
         seqs_full = np.concatenate((seqs, additional_feats), axis=1)
     else:
         seqs_full = seqs
+
+    # Train/test split
     ratio = 0.2
     number_t = int(len(seqs_full) * ratio)
     index = list(range(len(seqs_full)))
@@ -252,20 +337,26 @@ def main():
     seqs_tr = seqs_full[index_train]
     signals_tr = signals[index_train]
     labels_tr = np.ones((len(seqs_tr), 1))
-
     labels_te = np.ones((len(seqs_te), 1))
-    np.savez(out_dir + '/%s_test.npz' % name, data=seqs_te, signal=signals_te, label=labels_te)    
-    ## selecting negative samples ##
+
+    np.savez(osp.join(out_dir, f'{name}_test.npz'), data=seqs_te, signal=signals_te, label=labels_te)
+
+    # ----- Negative samples -----
     seqs_neg, signals_neg, additional_feats_neg = get_data_local_neg(
-    seqs_bed, sequence_dict, pvalue_file, max_neg, additional_feature_files=additional_feature_files)
-    signals_neg = np.log10(1+signals_neg)
-    if additional_feats_neg is not None:
+        seqs_bed, sequence_dict, pvalue_file, max_neg, additional_feature_files=additional_feature_files
+    )
+
+    signals_neg = np.log10(1 + signals_neg)
+    signals_neg = (signals_neg >= params.thresh).astype(np.int8)
+
+    if additional_feats_neg is not None and len(additional_feats_neg) > 0:
         print("seqs_neg shape:", seqs_neg.shape)
         print("additional_feats_neg shape:", additional_feats_neg.shape)
         seqs_neg_full = np.concatenate((seqs_neg, additional_feats_neg), axis=1)
     else:
         seqs_neg_full = seqs_neg
-    ratio = 0.2
+
+    # Train/test split for negatives
     number_t = int(len(seqs_neg_full) * ratio)
     index_neg = list(range(len(seqs_neg_full)))
     index_neg_test = random.sample(index_neg, number_t)
@@ -277,14 +368,20 @@ def main():
 
     labels_neg_tr = np.zeros((len(seqs_neg_tr), 1))
     labels_neg_te = np.zeros((len(seqs_neg_te), 1))
-    np.savez(out_dir + '/%s_neg.npz' % name, data=seqs_neg_te, signal=signals_neg_te, label=labels_neg_te)
 
+    np.savez(osp.join(out_dir, f'{name}_neg.npz'), data=seqs_neg_te, signal=signals_neg_te, label=labels_neg_te)
+
+    # ----- Merge train -----
     seqs_total = np.concatenate((seqs_tr, seqs_neg_tr), axis=0)
     signals_total = np.concatenate((signals_tr, signals_neg_tr))
     labels_total = np.concatenate((labels_tr, labels_neg_tr), axis=0)
-    np.savez(out_dir + '/%s_train.npz' % name, data=seqs_total, signal=signals_total, label=labels_total)
-    print("{}: The train data are: {}".format(name, len(seqs_total)))
-    print("{}: The positive test data are: {}".format(name, len(seqs_te)))
-    print("{}: The negative test data are: {}\n".format(name, len(seqs_neg_te)))
+
+    np.savez(osp.join(out_dir, f'{name}_train.npz'),
+             data=seqs_total, signal=signals_total, label=labels_total)
+
+    print(f"{name}: The train data are: {len(seqs_total)}")
+    print(f"{name}: The positive test data are: {len(seqs_te)}")
+    print(f"{name}: The negative test data are: {len(seqs_neg_te)}\n")
+    
 
 if __name__ == '__main__':  main()
