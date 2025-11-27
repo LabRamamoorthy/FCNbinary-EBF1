@@ -17,7 +17,11 @@ matplotlib.use("agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pyBigWig
-    
+plt.rcParams["font.family"] = "serif"
+
+
+# ---------------- Helper functions ----------------
+
 def Smoothavg(x, window):
     if len(x) < window:
         return x
@@ -39,7 +43,6 @@ def extract_additional_features(bed_lines, feature_files, location_func,
             start, end = int(start_s), int(end_s)
             start_f, end_f = location_func(chrom, start, end)
 
-            # Clamp coordinates
             chrom_len = chrom_sizes.get(chrom, end_f + window)
             start_c = max(0, start_f - window // 2)
             end_c = min(end_f + window // 2, chrom_len)
@@ -67,58 +70,6 @@ def extract_additional_features(bed_lines, feature_files, location_func,
     all_feats = np.transpose(all_feats, (1, 0, 2))  # [N, F, SEQ_LEN]
     return all_feats
 
-def lineplot(signals, true_signals, name, outdir, thres, smooth_window=5):
-    for key in signals.keys():
-        signal = np.array(signals[key])
-        true_signal = np.array(true_signals.get(key, np.zeros_like(signal)))
-        # if smooth_window > 1:
-        #     signal = Smoothavg(signal, smooth_window)
-        true_signal = np.log10(1 + true_signal)
-
-        segment_len = 1000
-        length = len(signal)
-        n = int(np.floor(length / segment_len))
-        positions_x = []
-        positions_y = []
-
-        for i in range(n):
-            segment = signal[i * segment_len:(i + 1) * segment_len]
-            position = np.argmax(segment) + i * segment_len
-            Max = np.max(segment)
-            if Max > thres:
-                positions_x.append(position)
-                positions_y.append(np.min(segment) + 0.2)
-
-        x = np.arange(length)
-
-        # Pearson correlation
-        if len(signal) == len(true_signal) and len(signal) > 1:
-            r, _ = pearsonr(signal, true_signal)
-            r_text = f"Pearson r = {r:.3f}"
-        else:
-            r_text = "Pearson r = N/A"
-
-        # Create vertically stacked subplots
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
-
-        # Prediction plot
-        ax1.plot(x, signal, label="Prediction", color='orange')
-        for position_x, position_y in zip(positions_x, positions_y):
-            ax1.axvline(x=position_x, ls="--", c="green")
-            ax1.text(position_x, position_y, str(position_x), fontsize=7)
-        ax1.set_ylabel("Prediction", fontsize=12)
-        ax1.set_title(f"{key} | {r_text}", fontsize=13)
-        ax1.tick_params(labelsize=10)
-
-        # True signal plot (log-normalized)
-        ax2.plot(x, true_signal, label="True Signal (log10)", color='black')
-        ax2.set_ylabel("True", fontsize=12)
-        ax2.set_xlabel("Position", fontsize=12)
-        ax2.tick_params(labelsize=10)
-
-        plt.tight_layout()
-        plt.savefig(osp.join(outdir, f"{key}.png"), format='png')
-        plt.close(fig)
 
 def one_hot(sequence_dict, chrom, start, end):
     seq_dict = {'A':[1, 0, 0, 0], 'G':[0, 0, 1, 0],
@@ -130,49 +81,31 @@ def one_hot(sequence_dict, chrom, start, end):
     for c in seq:
         temp.append(seq_dict.get(c, [0, 0, 0, 0]))
     temp = np.array([temp], dtype=np.float32)
-
     return temp.transpose((0, 2, 1))
 
 
-def extract(signal, thres, Window):
-    segment_len = 1000
-    length = len(signal)
-    n = int(np.ceil(length / segment_len))
-    segments = []
-    for i in range(n):
-        segments.append(signal[i*segment_len:(i+1)*segment_len])
-    starts = []
-    ends = []
-    for i in range(len(segments)):
-        segment = segments[i]
-        position = np.argmax(segment) + i*segment_len
-        Max = np.max(segment)
-        if Max > thres:
-            start = int(position - Window // 2)
-            end = int(position + Window // 2)
-        else:
-            start = 0
-            end = 0
-        starts.append(start)
-        ends.append(end)
-    return starts, ends
+# ---------------- Binary peak extraction ----------------
 
-
-def locating(parameters, sequence_dict, model, beds, outdir, bw, feature_files=None, smooth=True, chrom_sizes=None):
+def locate_binary(parameters, sequence_dict, model, beds, outdir, bw, feature_files=None, smooth=True, chrom_sizes=None):
     model.eval()
     beds_pos = []
-    signals = {}
+    signals_prob = {}
+    signals_binary = {}
     true_signals = {}
     num_pos = 0
-    f = open(osp.join(outdir, 'predictions.txt'), 'w')
+
+    f_prob = open(osp.join(outdir, 'predictions_prob.txt'), 'w')
+    f_bin = open(osp.join(outdir, 'predictions_binary.txt'), 'w')
+
     for i, line in enumerate(beds):
         bed = line.strip().split()
         chrom = bed[0]
         start = int(bed[1])
         end = int(bed[2])
         seq_len = end - start
-        X_data = torch.from_numpy(one_hot(sequence_dict, chrom, start, end))
-        X_data = X_data.float().to(parameters['Device'])
+
+        X_data = torch.from_numpy(one_hot(sequence_dict, chrom, start, end)).float().to(parameters['Device'])
+
         use_features = feature_files is not None and len(feature_files) > 0
         if use_features:
             feat_input = extract_additional_features(
@@ -183,29 +116,92 @@ def locating(parameters, sequence_dict, model, beds, outdir, bw, feature_files=N
                 chrom_sizes=chrom_sizes
             )
             feat_input_tensor = torch.from_numpy(feat_input).float().to(parameters['Device'])
-            X_input = torch.cat([X_data, feat_input_tensor], dim=1) 
-            signal_p = model(X_input)
+            X_input = torch.cat([X_data, feat_input_tensor], dim=1)
         else:
             X_input = X_data
+
         with torch.no_grad():
-            signal_p = model(X_input)
-        signal_p = signal_p.view(-1).data.cpu().numpy()
+            logits = model(X_input)
+            probs = torch.sigmoid(logits).cpu().numpy().flatten()
+            binary = (probs > parameters['Threshold']).astype(np.float32)
+
+        f_prob.write('\t'.join([str(round(x, 3)) for x in probs]) + '\n')
+        f_bin.write('\t'.join([str(int(x)) for x in binary]) + '\n')
+
+        signals_prob[f"{chrom}:{start}-{end}"] = probs
+        signals_binary[f"{chrom}:{start}-{end}"] = binary
+
         signal_true = np.nan_to_num(bw.values(chrom, start, end))
-        f.write('\t'.join([str(round(x, 3)) for x in signal_p]) + '\n')
-        signals["{}:{}-{}".format(chrom, start, end)] = signal_p
-        true_signals["{}:{}-{}".format(chrom, start, end)] = signal_true
-        starts, ends = extract(signal_p, parameters['Threshold'], parameters['Window'])
-        for start_p, end_p in zip(starts, ends):
-            if start_p == 0 and end_p == 0:
-                continue
-            else:
-                start_p += start
-                end_p += start
-                num_pos += 1
-                beds_pos.append((chrom, start_p, end_p))
-    print("A total of {} potential binding regions are found.".format(num_pos))
-    f.close()
-    return beds_pos, signals , true_signals
+        true_signals[f"{chrom}:{start}-{end}"] = signal_true
+
+        for pos in np.where(binary == 1)[0]:
+            bed_start = start + pos
+            bed_end = bed_start + 1
+            beds_pos.append((chrom, bed_start, bed_end))
+            num_pos += 1
+
+    f_prob.close()
+    f_bin.close()
+
+    print(f"A total of {num_pos} positive positions (binary=1) found.")
+    return beds_pos, signals_prob, signals_binary, true_signals
+
+# ---------------- Saving values ----------------
+
+def save_per_base_true_values(signals_prob, signals_binary, true_signals, outdir):
+    """Save per-base info: chrom, start, end, predicted probability, binary, true value (un-normalized)"""
+    out_file = osp.join(outdir, "per_base_values.bed")
+    with open(out_file, 'w') as f:
+        for key in signals_prob.keys():
+            chrom, start_end = key.split(":")
+            start0, _ = start_end.split("-")
+            start0 = int(start0)
+
+            probs = signals_prob[key]
+            binary = signals_binary[key]
+            true_vals = true_signals[key]  # already un-normalized
+
+            for i in range(len(probs)):
+                bed_start = start0 + i
+                bed_end = bed_start + 1
+                f.write(f"{chrom}\t{bed_start}\t{bed_end}\t{probs[i]:.6f}\t{int(binary[i])}\t{true_vals[i]:.6f}\n")
+
+    print(f"Per-base true values saved to {out_file}")
+
+
+# ---------------- Plotting ----------------
+
+def lineplot_binary(signals_prob, signals_binary, true_signals, name, outdir, thres):
+    for key in signals_prob.keys():
+        prob = np.array(signals_prob[key])
+        binary = np.array(signals_binary[key])
+        true_signal = np.log10(1 + np.array(true_signals.get(key, np.zeros_like(prob))))
+
+        x = np.arange(len(prob))
+        fig, ax = plt.subplots(3, 1, figsize=(12, 7), sharex=True)
+
+        ax[0].plot(x, prob, color='orange', label="Predicted Probability")
+        ax[0].axhline(thres, color='red', linestyle='--', label=f"Threshold = {thres}")
+        ax[0].legend()
+        ax[0].set_ylabel("Probability")
+
+        ax[1].step(x, binary, where='mid', color='green', label="Binary (0/1)")
+        ax[1].legend()
+        ax[1].set_ylabel("Binary Output")
+
+        ax[2].plot(x, true_signal, color='black', label="True Signal (log10)")
+        ax[2].legend()
+        ax[2].set_ylabel("True Signal")
+        ax[2].set_xlabel("Position")
+
+        plt.tight_layout()
+        plt.savefig(osp.join(outdir, f"{key}_binary_plot.pdf"), format='pdf')
+        plt.savefig(osp.join(outdir, f"{key}_binary_plot.png"), format='png')
+
+        plt.close()
+
+
+# ---------------- Utilities ----------------
 
 def load_chrom_sizes(path):
     chrom_sizes = {}
@@ -215,114 +211,67 @@ def load_chrom_sizes(path):
             chrom_sizes[chrom] = int(size)
     return chrom_sizes
 
+
 def get_args():
-    parser = argparse.ArgumentParser(description="FCNsignal with optional features")
-    parser.add_argument("-i", dest="infile", type=str, required=True,
-                        help="Input BED file")
-    parser.add_argument("-n", dest="name", type=str, default="ebf",
-                        help="Name of the data/model")
-    parser.add_argument("-g", dest="gpu", type=str, default='0',
-                        help="GPU device (or -1 for CPU)")
-    parser.add_argument("-t", dest="threshold", type=float, default=1.5,
-                        help="Threshold value")
-    parser.add_argument("-w", dest="window", type=int, default=60,
-                        help="Length of binding regions")
-    parser.add_argument("-c", dest="checkpoint", type=str, default='./models/',
-                        help="Model checkpoint folder")
-    parser.add_argument("--features", nargs='*', default=None,
-                        help="Paths to bigWig files for additional features")
-    parser.add_argument("--smooth", action='store_true',
-                        help="Apply smoothing to additional features")
-    parser.add_argument("--chrom_sizes", type=str, default="Genome/mm9.chrom.sizes",
-                        help="Chromosome sizes file")
-    
+    parser = argparse.ArgumentParser(description="FCNsignal binary classification (base resolution)")
+    parser.add_argument("-i", dest="infile", type=str, required=True, help="Input BED file")
+    parser.add_argument("-n", dest="name", type=str, default="ebf", help="Name of data/model")
+    parser.add_argument("-g", dest="gpu", type=str, default='0', help="GPU device (or -1 for CPU)")
+    parser.add_argument("-t", dest="threshold", type=float, default=0.5, help="Threshold for binary classification")
+    parser.add_argument("-w", dest="window", type=int, default=60, help="Length of binding region")
+    parser.add_argument("-c", dest="checkpoint", type=str, default='./models/', help="Model checkpoint folder")
+    parser.add_argument("--features", nargs='*', default=None, help="Paths to bigWig files for additional features")
+    parser.add_argument("--smooth", action='store_true', help="Apply smoothing to features")
+    parser.add_argument("--chrom_sizes", type=str, default="Genome/mm9.chrom.sizes", help="Chromosome sizes file")
     return parser.parse_args()
 
+
+# ---------------- Main ----------------
 
 def main():
     args = get_args()
     root = osp.dirname(__file__)
-    # infile = osp.join(root, "input.bed")
     infile = args.infile
     name = args.name
     threshold = args.threshold
     window = args.window
-    if torch.cuda.is_available() and args.gpu != '-1':
-        device = torch.device("cuda:" + args.gpu)
-    else:
-        device = torch.device("cpu")
-    bw_truth = pyBigWig.open("EBF/p-value.bw")
 
-    # model_file = osp.join(root, "models/{}/model_best.pth".format(name))
+    device = torch.device("cuda:" + args.gpu if torch.cuda.is_available() and args.gpu != '-1' else "cpu")
+
+    bw_truth = pyBigWig.open("EBF/p-value.bw")
     model_file = osp.join(args.checkpoint, "model_best_ebf.pth")
-    outdir = osp.join(root, "output_Mod_withfeatures")
-    if not osp.exists(outdir):
-        os.mkdir(outdir)
+    outdir = osp.join(root, "Missed_peaks")
+    os.makedirs(outdir, exist_ok=True)
+
     sequence_dict = SeqIO.to_dict(SeqIO.parse(open(osp.join(root, "Genome/mm9.fa")), 'fasta'))
     with open(infile) as f:
         beds = f.readlines()
-    # Load weights
+
     chk = torch.load(model_file, map_location=device)
     state_dict = chk['model_state_dict']
-    if args.features is not None and len(args.features) > 0:
-        n_features = len(args.features)
-        bw_list = [pyBigWig.open(f) for f in args.features]
-    else:
-        n_features = 0
-        bw_list = []
+
+    n_features = len(args.features) if args.features else 0
     model = FCNsignalMod(motiflen=12, n_features=n_features)
     model.load_state_dict(state_dict)
     model.to(device)
+
     parameters = {'Window': window, 'Name': name, 'Threshold': threshold, 'Device': device, 'Feature_Files': args.features}
-    # beds_pos, signal_p = locating(parameters, sequence_dict, model, beds, outdir)
-    beds_pos, signal_p, signal_t = locating(parameters, sequence_dict, model, beds, outdir, bw_truth, feature_files=args.features, smooth=args.smooth, chrom_sizes=load_chrom_sizes(args.chrom_sizes))
-    f = open(osp.join(outdir, 'binding.bed'), 'w')
-    for bed in beds_pos:
-        chrom = bed[0]
-        start = bed[1]
-        end = bed[2]
-        f.write("{}\t{}\t{}\n".format(chrom, start, end))
-    f.close()
-    # lineplot(signal_p, name, outdir, parameters['Threshold'])
-    lineplot(signal_p, signal_t, name, outdir, parameters['Threshold'])
-    # Group Pearson correlation by sequence length bins and plot bar chart
-    lengths, correlations = [], []
-    for key in signal_p.keys():
-        pred = np.array(signal_p[key])
-        true = np.array(signal_t.get(key, np.zeros_like(pred)))
-        length = int(key.split(":")[1].split("-")[1]) - int(key.split(":")[1].split("-")[0])
-        if len(pred) == len(true) and len(pred) > 1:
-            r, _ = pearsonr(pred, true)
-            lengths.append(length)
-            correlations.append(r)
 
-    if lengths:
-        df_corr = pd.DataFrame({'Length': lengths, 'Pearson_r': correlations})
+    beds_pos, signals_prob, signals_binary, signals_true = locate_binary(
+        parameters, sequence_dict, model, beds, outdir, bw_truth,
+        feature_files=args.features, smooth=args.smooth,
+        chrom_sizes=load_chrom_sizes(args.chrom_sizes)
+    )
 
-        bin_size = 1000
-        min_len, max_len = df_corr['Length'].min(), df_corr['Length'].max()
-        bins = np.arange((min_len // bin_size) * bin_size,
-                         ((max_len // bin_size) + 1) * bin_size + 1,
-                         bin_size)
-        labels = [f"{b}-{b+bin_size-1}" for b in bins[:-1]]
-        df_corr['Length_bin'] = pd.cut(df_corr['Length'], bins=bins, labels=labels, include_lowest=True)
+    save_per_base_true_values(signals_prob, signals_binary, signals_true, outdir)
 
-        grouped = df_corr.groupby('Length_bin', observed=True)['Pearson_r'].mean().reset_index()
+    with open(osp.join(outdir, 'binding_binary.bed'), 'w') as f:
+        for chrom, start, end in beds_pos:
+            f.write(f"{chrom}\t{start}\t{end}\n")
 
-        plt.figure(figsize=(10, 6))
-        sns.barplot(data=grouped, x='Length_bin', y='Pearson_r', color='skyblue', edgecolor='black')
-        plt.title("Mean Pearson Correlation by Sequence Length", fontsize=14)
-        plt.xlabel("Sequence Length Bin (bp)", fontsize=12)
-        plt.ylabel("Mean Pearson r", fontsize=12)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.savefig(osp.join(outdir, f"{name}_pearson_by_length_bins.png"), format='png')
-        plt.close()
-    else:
-        print("No sequences found to calculate Pearson correlation for.")
-
+    lineplot_binary(signals_prob, signals_binary, signals_true, name, outdir, threshold)
+    print("Binary classification complete ✅")
 
 
 if __name__ == "__main__":
     main()
-
