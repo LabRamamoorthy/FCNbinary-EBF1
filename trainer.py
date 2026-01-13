@@ -2,7 +2,7 @@ import os
 import os.path as osp
 import numpy as np
 from copy import deepcopy
-
+import torch.nn as nn
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, confusion_matrix, ConfusionMatrixDisplay,
@@ -21,7 +21,7 @@ class Trainer(object):
 
     def __init__(self, model, optimizer, criterion, device, checkpoint,
                  max_epoch, train_loader, test_loader, scheduler,
-                 threshold=0.5, signal_thresh=1e-4, seq_min_run=6):
+                 threshold=0.5, seq_min_run=6):
         """
         Args:
             signal_thresh: minimal value to consider a position as positive
@@ -36,7 +36,6 @@ class Trainer(object):
         self.max_epoch = max_epoch
         self.checkpoint = checkpoint
         self.threshold = threshold
-        self.signal_thresh = signal_thresh
         self.seq_min_run = seq_min_run
 
         self.epoch = 0
@@ -52,44 +51,43 @@ class Trainer(object):
         self.val_preds = []
         self.val_truths = []
 
-        # sequence-level metrics container
-        self.sequence_metrics = None
+        # # sequence-level metrics container
+        # self.sequence_metrics = None
         # self.criterion = criterion
+
         if isinstance(criterion, BinaryLoss) and hasattr(criterion, 'use_logits'):
             pos_weight = self.compute_pos_weight()
-            self.criterion = BinaryLoss(pos_weight=pos_weight)
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            print("Using BCEWithLogitsLoss with computed pos_weight")
         else:
             self.criterion = criterion
 
-    def threshold_signal(self, signal):
-        """Convert small signals to binary 0/1 using signal_thresh"""
-        return (signal >= self.signal_thresh).float()
-
     def compute_pos_weight(self):
+        """Compute pos_weight for BCEWithLogitsLoss based on class distribution"""
         total_pos = 0
         total_neg = 0
 
-        # Iterate through the training loader once
+        print("Computing class distribution from training data...")
         for sample_batch in self.train_loader:
-            signal = sample_batch["signal"].float()  # shape: (batch, seq_len) or (batch, 1, seq_len)
+            signal = sample_batch["signal"].float()
             if signal.ndim == 3:
                 signal = signal.squeeze(1)
-            signal_np = signal.numpy()
-            total_pos += np.sum(signal_np >= self.signal_thresh)
-            total_neg += np.sum(signal_np < self.signal_thresh)
+            
+            signal_np = signal.cpu().numpy()  
+            
+            total_pos += np.sum(signal_np == 1)
+            total_neg += np.sum(signal_np == 0)
 
         if total_pos == 0 or total_neg == 0:
             print("Warning: only one class present in training data. Using pos_weight = 1.0")
             pos_weight_value = 1.0
         else:
-            pos_weight_value = (total_neg / total_pos) * 0.6
-            if pos_weight_value > 1.0:
-                print(f"Positive class is minority. Giving it more weight. pos_weight = {pos_weight_value:.3f}")
-            else:
-                print(f"Positive class is majority. Negative class will be weighted more. pos_weight = {pos_weight_value:.3f}")
+            # Weight inversely proportional to class frequency
+            pos_weight_value = total_neg / total_pos
+            print(f"Class distribution: Positives = {total_pos:,}, Negatives = {total_neg:,}")
+            print(f"Computed pos_weight = {pos_weight_value:.3f}")
 
         pos_weight_tensor = torch.tensor(pos_weight_value, dtype=torch.float32).to(self.device)
-        print(f"Training data distribution: Positives = {total_pos}, Negatives = {total_neg}")
         return pos_weight_tensor
 
 
@@ -148,8 +146,7 @@ class Trainer(object):
                 pred_batch = pred_batch.reshape(pred_batch.shape[0], pred_batch.shape[2])
 
             for t, p in zip(truth_batch, pred_batch):
-                # convert to binary using signal_thresh and threshold respectively
-                t_bin = (np.asarray(t) >= self.signal_thresh).astype(int)
+                t_bin = np.asarray(t).astype(int)
                 p_bin = (np.asarray(p) >= self.threshold).astype(int)
 
                 truth_has = self.has_run_of_ones(t_bin, min_run=min_run)
@@ -206,7 +203,8 @@ class Trainer(object):
                 epoch_loss += loss.item()
 
                 if epoch == self.max_epoch - 1:
-                    self.train_preds.append(pred.detach().cpu().numpy())
+                    probs = torch.sigmoid(pred)  
+                    self.train_preds.append(probs.detach().cpu().numpy()) 
                     self.train_truths.append(signal.cpu().numpy())
 
                 print(f"epoch/i_batch: {epoch}/{i_batch} --- "
@@ -240,11 +238,12 @@ class Trainer(object):
                 signal = signal.squeeze(1)
 
             with torch.no_grad():
-                pred = self.model(X_data)
-                loss = self.criterion(pred, signal)
+                logits = self.model(X_data)
+                loss = self.criterion(logits, signal)
+                probs = torch.sigmoid(logits)
 
             val_loss += loss.item()
-            p_all.append(pred.cpu().numpy())
+            p_all.append(probs.cpu().numpy())
             t_all.append(signal.cpu().numpy())
 
         val_loss /= len(self.test_loader)

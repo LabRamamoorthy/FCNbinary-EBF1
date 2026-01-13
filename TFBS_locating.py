@@ -6,7 +6,6 @@ import sys
 import numpy as np
 import os.path as osp
 from Bio import SeqIO
-from scipy.stats import pearsonr
 import torch
 # custom functions defined by user
 from FCNmotif import FCNsignalMod
@@ -148,26 +147,61 @@ def locate_binary(parameters, sequence_dict, model, beds, outdir, bw, feature_fi
 
 # ---------------- Saving values ----------------
 
-def save_per_base_true_values(signals_prob, signals_binary, true_signals, outdir):
-    """Save per-base info: chrom, start, end, predicted probability, binary, true value (un-normalized)"""
-    out_file = osp.join(outdir, "per_base_values.bed")
-    with open(out_file, 'w') as f:
-        for key in signals_prob.keys():
-            chrom, start_end = key.split(":")
-            start0, _ = start_end.split("-")
-            start0 = int(start0)
+def save_per_base_true_values(signals_prob, signals_binary, true_signals, outdir,
+                                       prob_threshold=0.5, true_threshold=0.1):
+    
+    os.makedirs(outdir, exist_ok=True)
+    all_probs = []
+    all_pred_bin = []
+    all_true_val = []
+    all_true_bin = []
+    keys_list = []
 
-            probs = signals_prob[key]
-            binary = signals_binary[key]
-            true_vals = true_signals[key]  # already un-normalized
+    per_base_bed = osp.join(outdir, "per_base_values.bed")
+    f = open(per_base_bed, 'w')
 
-            for i in range(len(probs)):
-                bed_start = start0 + i
-                bed_end = bed_start + 1
-                f.write(f"{chrom}\t{bed_start}\t{bed_end}\t{probs[i]:.6f}\t{int(binary[i])}\t{true_vals[i]:.6f}\n")
+    for key in signals_prob.keys():
+        chrom, start_end = key.split(":")
+        start0, end0 = map(int, start_end.split("-"))
 
-    print(f"Per-base true values saved to {out_file}")
+        probs = np.array(signals_prob[key], dtype=np.float32)
+        pred_bin = (probs >= prob_threshold).astype(np.int32)
+        true_raw = np.array(true_signals[key], dtype=np.float32)
+        true_val = np.log10(1 + true_raw)
+        true_bin = (true_raw >= true_threshold).astype(np.int32)
 
+        # append to lists
+        all_probs.append(probs)
+        all_pred_bin.append(pred_bin)
+        all_true_val.append(true_val)
+        all_true_bin.append(true_bin)
+        keys_list.append(key)
+
+        # write BED
+        for i in range(len(probs)):
+            bed_start = start0 + i
+            bed_end = bed_start + 1
+            f.write(
+                f"{chrom}\t{bed_start}\t{bed_end}\t"
+                f"{probs[i]:.6f}\t{pred_bin[i]}\t"
+                f"{true_val[i]:.6f}\t{true_bin[i]}\n"
+            )
+
+    f.close()
+    print(f"Saved per-base BED → {per_base_bed}")
+
+    # save all sequences as object arrays (variable length)
+    combined_npz = osp.join(outdir, "all_sequences.npz")
+    np.savez(
+        combined_npz,
+        pred_prob=np.array(all_probs, dtype=object),
+        pred_bin=np.array(all_pred_bin, dtype=object),
+        true_val=np.array(all_true_val, dtype=object),
+        true_bin=np.array(all_true_bin, dtype=object),
+        keys=np.array(keys_list)
+    )
+
+    print(f"Saved combined NPZ → {combined_npz}")
 
 # ---------------- Plotting ----------------
 
@@ -240,7 +274,7 @@ def main():
 
     bw_truth = pyBigWig.open("EBF/p-value.bw")
     model_file = osp.join(args.checkpoint, "model_best_ebf.pth")
-    outdir = osp.join(root, "Missed_peaks")
+    outdir = osp.join(root, "Results/test_0.25")
     os.makedirs(outdir, exist_ok=True)
 
     sequence_dict = SeqIO.to_dict(SeqIO.parse(open(osp.join(root, "Genome/mm9.fa")), 'fasta'))
@@ -263,14 +297,13 @@ def main():
         chrom_sizes=load_chrom_sizes(args.chrom_sizes)
     )
 
-    save_per_base_true_values(signals_prob, signals_binary, signals_true, outdir)
-
+    save_per_base_true_values(signals_prob, signals_binary, signals_true, outdir, prob_threshold=0.5, true_threshold=0.1)
     with open(osp.join(outdir, 'binding_binary.bed'), 'w') as f:
         for chrom, start, end in beds_pos:
             f.write(f"{chrom}\t{start}\t{end}\n")
 
     lineplot_binary(signals_prob, signals_binary, signals_true, name, outdir, threshold)
-    print("Binary classification complete ✅")
+    print("Binary classification complete")
 
 
 if __name__ == "__main__":

@@ -20,18 +20,36 @@ def conv_only(in_, out_, kernel_size=3, stride=1, bias=True):
     padding = kernel_size // 2
     return nn.Conv1d(in_, out_, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias)
 
-# Attention module
-class Attention(nn.Module):
-    def __init__(self, input_dim, hidden_dim=16):
+# ContextGatedBlock module
+class ContextGatedBlock(nn.Module):
+    def __init__(self, input_dim, hidden_dim=32):
         super().__init__()
+        # Local gating components
         self.V = nn.Linear(input_dim, hidden_dim)
         self.U = nn.Linear(input_dim, hidden_dim)
-        self.w = nn.Linear(hidden_dim, input_dim)   
+        
+        # Global context
+        self.global_proj = nn.Linear(input_dim, hidden_dim)
+        
+        # Output projection
+        self.w = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, x):
+        # x shape: [B, L, input_dim]
+        
+        # Local gated features
         gate = torch.tanh(self.V(x)) * torch.sigmoid(self.U(x))
-        out = self.w(gate)          
-        return out, gate
+        
+        # Global context (average pooling over sequence)
+        global_feat = torch.mean(x, dim=1, keepdim=True)  # [B, 1, input_dim]
+        global_feat = self.global_proj(global_feat)  # [B, 1, hidden_dim]
+        global_feat = global_feat.expand(-1, x.size(1), -1)  # Broadcast to [B, L, hidden_dim]
+        
+        # Combine local and global
+        combined = gate + global_feat
+        out = self.w(combined) + x  # Residual connection
+        
+        return out
 
 
 
@@ -53,11 +71,10 @@ class FCNsignalMod(nn.Module):
         self.conv2 = bn_act_conv(32, 32, kernel_size=7)
         self.pool2 = nn.MaxPool1d(2)
 
-        # GRU + Attention
+        # GRU + ContextGatedBlock
         self.gru_hidden = 48
         self.gru = nn.GRU(32, self.gru_hidden, batch_first=True, bidirectional=True)
-        self.attention = Attention(input_dim=self.gru_hidden * 2, hidden_dim=16)
-        self.res_proj = nn.Linear(32, 96)
+        self.ContextGatedBlock = ContextGatedBlock(input_dim=self.gru_hidden * 2, hidden_dim=32)
 
         # Decoder / blending
         self.blend2 = bn_act_conv(self.gru_hidden * 2, 32)
@@ -78,6 +95,14 @@ class FCNsignalMod(nn.Module):
             elif isinstance(layer, nn.BatchNorm1d):
                 nn.init.constant_(layer.weight, 1)
                 nn.init.constant_(layer.bias, 0)
+            elif isinstance(layer, nn.GRU):
+                for name, param in layer.named_parameters():
+                    if 'weight_ih' in name:
+                        nn.init.xavier_uniform_(param)
+                    elif 'weight_hh' in name:
+                        nn.init.orthogonal_(param)
+                    elif 'bias' in name:
+                        nn.init.constant_(param, 0)
 
     def forward(self, x):
         # x: [B, C, L] (C = 4 or 4 + n_features)
@@ -97,16 +122,14 @@ class FCNsignalMod(nn.Module):
         out = self.pool2(out)
         out = self.dropout(out)
 
-        # GRU + Attention
+        # GRU + ContextGatedBlock
         out = out.permute(0, 2, 1)      # [B, L, 32]
-        residual = out                  # [B, L, 32]
         out, _ = self.gru(out)          # [B, L, 96]
-        out_att, _ = self.attention(out)  # [B, L, 96]
-        residual = self.res_proj(residual)  # [B, L, 96]
-        out = out_att + residual        
-        out = out.permute(0, 2, 1)     
+        out = self.dropout(out) 
+        out = self.ContextGatedBlock(out)       # [B, L, 96] 
+        out = out.permute(0, 2, 1)      # [B, 96, L]
 
-        # Decoder
+        # Decoder - upsample back to original resolution
         out = upsample(out, skip2.size(-1))
         out = self.blend2(out)
         out = upsample(out, skip1.size(-1))
@@ -114,25 +137,3 @@ class FCNsignalMod(nn.Module):
 
         return out.squeeze(1)  # [B, L]
 
-
-
-# class Attention(nn.Module):
-#     def __init__(self, input_dim, hidden_dim=16):
-#         super().__init__()
-#         self.attn = nn.Sequential(
-#             nn.Linear(input_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, 1)
-#         )
-
-#     def forward(self, x):
-#         # x: [B, L, C]
-#         # Compute raw attention scores
-#         scores = self.attn(x)  # shape [B, L, 1]
-        
-#         # Softmax across sequence length
-#         weights = torch.softmax(scores, dim=1)  # sum over L = 1
-        
-#         # Multiply input by attention weights
-#         out = x * weights
-#         return out, weights
