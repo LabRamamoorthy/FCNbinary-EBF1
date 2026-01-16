@@ -3,12 +3,16 @@ from matplotlib import pyplot as plt
 from matplotlib_venn import venn2
 import subprocess
 
-folder = "test_predict/output/AWT2_features"
+folder = "test_predict/output/focal_loss_0.25/bedtools_results/"
 
 # Paths
-true_bed = os.path.join("EBF/thresholded_0based.bed")
-pred_bed = os.path.join(folder, "test_with_peak.tsv")
-overlap_bed = os.path.join(folder, "bedtools_results/True_in_Pred.bed")
+true_bed = os.path.join(folder,"true_noheader.bed")
+pred_bed = os.path.join(folder, "pred_noheader.bed")
+overlap_bed = os.path.join(folder, "True_in_Pred.bed")
+
+# true_bed = os.path.join("test_predict/output/WT2_binary/WT3/true_noheader.bed")
+# pred_bed = os.path.join("test_predict/output/WT2_binary/WT3/pred_noheader.bed")
+# overlap_bed = os.path.join("test_predict/output/WT2_binary/WT3/True_in_Pred.bed")
 
 # Count lines
 def count_lines(path):
@@ -37,7 +41,7 @@ v.get_label_by_id('11').set_text(str(overlap))
 
 plt.title("True vs Predicted Intervals")
 plt.tight_layout()
-plt.savefig(os.path.join(folder, "bedtools_results/venn_counts.png"), dpi=300)
+plt.savefig(os.path.join(folder, "venn_counts.png"), dpi=300)
 plt.show()
 
 # Print summary
