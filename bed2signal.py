@@ -15,7 +15,7 @@ INDEX = ['chr' + str(i + 1) for i in range(23)]
 INDEX[22] = 'chrX'
 SMOOTH = True
 WINDOW = 15
-THRESHOLD = 0.05
+THRESHOLD = 0.4
 ROOT = osp.dirname(__file__)
 CHROM = {}
 with open('Genome/mm9.chrom.sizes') as f:
@@ -207,13 +207,24 @@ def extract_additional_features(bed_lines, feature_files, location_func):
     all_feats = np.transpose(all_feats, (1, 0, 2))  # [N, F, SEQ_LEN]
     return all_feats
 
-def save_peak_signals_separate(seqs_bed, signal_file, out_file, smooth=SMOOTH, window=WINDOW, offset=OFFSET):
+def save_peak_signals_separate(
+    seqs_bed,
+    signal_file,
+    out_file,
+    smooth=SMOOTH,
+    window=WINDOW,
+    offset=OFFSET,
+    thresh=THRESHOLD
+):
     """
-    Save per-peak signals (positive and negative) to a separate TSV file.
-    Ensures the coordinates and signal lengths match what is used in .npz files.
+    Save per-peak signals (positive and negative) to a TSV file.
+    Also saves binary signal after log10 normalization.
     """
     with open(seqs_bed) as f_in, open(out_file, 'w') as f_out:
-        f_out.write('peak_type\tchrom\tstart\tend\traw_signal\tsmoothed_norm_signal\n')
+        f_out.write(
+            'peak_type\tchrom\tstart\tend\t'
+            'raw_signal\tlog_signal\tbinary_signal\n'
+        )
 
         for line in f_in:
             chrom, start_s, end_s = line.strip().split()[:3]
@@ -222,57 +233,66 @@ def save_peak_signals_separate(seqs_bed, signal_file, out_file, smooth=SMOOTH, w
             if chrom not in CHROM:
                 continue
 
-            # ---------------- Positive peak ----------------
+            # ================= POSITIVE =================
             start_p, end_p = pos_location(chrom, start, end)
             start_p = max(0, start_p)
             end_p = min(end_p, CHROM[chrom])
             if end_p <= start_p:
                 continue
 
-            raw_signal = GetbigWig(signal_file, chrom, start_p, end_p)
-            raw_signal[np.isnan(raw_signal)] = 0.
+            raw = GetbigWig(signal_file, chrom, start_p, end_p)
+            raw[np.isnan(raw)] = 0.
+
             if smooth:
-                raw_signal_smooth = Smoothavg(raw_signal, window)
+                sig = Smoothavg(raw, window)
             else:
-                raw_signal_smooth = raw_signal
+                sig = raw
 
-            # pad/crop to SEQ_LEN
-            if len(raw_signal_smooth) < SEQ_LEN:
-                raw_signal_smooth = np.pad(raw_signal_smooth, (0, SEQ_LEN - len(raw_signal_smooth)), mode='constant')
-            elif len(raw_signal_smooth) > SEQ_LEN:
-                raw_signal_smooth = raw_signal_smooth[:SEQ_LEN]
+            # pad / crop
+            if len(sig) < SEQ_LEN:
+                sig = np.pad(sig, (0, SEQ_LEN - len(sig)))
+            else:
+                sig = sig[:SEQ_LEN]
 
-            smoothed_norm = np.log10(1 + raw_signal_smooth)
-            raw_str = ','.join([f'{x:.4f}' for x in raw_signal])
-            smooth_str = ','.join([f'{x:.4f}' for x in smoothed_norm])
-            f_out.write(f'pos\t{chrom}\t{start_p}\t{end_p}\t{raw_str}\t{smooth_str}\n')
+            log_sig = np.log10(1 + sig)
+            bin_sig = (log_sig >= thresh).astype(np.int8)
 
-            # ---------------- Negative peak ----------------
+            f_out.write(
+                f"pos\t{chrom}\t{start_p}\t{end_p}\t"
+                f"{','.join(f'{x:.4f}' for x in raw)}\t"
+                f"{','.join(f'{x:.4f}' for x in log_sig)}\t"
+                f"{','.join(map(str, bin_sig))}\n"
+            )
+
+            # ================= NEGATIVE =================
             start_n, end_n = neg_location(chrom, start, end)
             start_n = max(0, start_n)
             end_n = min(end_n, CHROM[chrom])
             if end_n <= start_n:
                 continue
 
-            raw_signal_n = GetbigWig(signal_file, chrom, start_n, end_n)
-            raw_signal_n[np.isnan(raw_signal_n)] = 0.
+            raw = GetbigWig(signal_file, chrom, start_n, end_n)
+            raw[np.isnan(raw)] = 0.
+
             if smooth:
-                raw_signal_smooth_n = Smoothavg(raw_signal_n, window)
+                sig = Smoothavg(raw, window)
             else:
-                raw_signal_smooth_n = raw_signal_n
+                sig = raw
 
-            # pad/crop to SEQ_LEN
-            if len(raw_signal_smooth_n) < SEQ_LEN:
-                raw_signal_smooth_n = np.pad(raw_signal_smooth_n, (0, SEQ_LEN - len(raw_signal_smooth_n)), mode='constant')
-            elif len(raw_signal_smooth_n) > SEQ_LEN:
-                raw_signal_smooth_n = raw_signal_smooth_n[:SEQ_LEN]
+            if len(sig) < SEQ_LEN:
+                sig = np.pad(sig, (0, SEQ_LEN - len(sig)))
+            else:
+                sig = sig[:SEQ_LEN]
 
-            smoothed_norm_n = np.log10(1 + raw_signal_smooth_n)
-            raw_str_n = ','.join([f'{x:.4f}' for x in raw_signal_n])
-            smooth_str_n = ','.join([f'{x:.4f}' for x in smoothed_norm_n])
-            f_out.write(f'neg\t{chrom}\t{start_n}\t{end_n}\t{raw_str_n}\t{smooth_str_n}\n')
+            log_sig = np.log10(1 + sig)
+            bin_sig = (log_sig >= thresh).astype(np.int8)
 
-
+            f_out.write(
+                f"neg\t{chrom}\t{start_n}\t{end_n}\t"
+                f"{','.join(f'{x:.4f}' for x in raw)}\t"
+                f"{','.join(f'{x:.4f}' for x in log_sig)}\t"
+                f"{','.join(map(str, bin_sig))}\n"
+            )
 
 
 def get_args():
@@ -280,7 +300,7 @@ def get_args():
     parser.add_argument("-d", dest="dir", type=str, default='')
     parser.add_argument("-n", dest="name", type=str, default='')
     parser.add_argument("-s", dest="seed", type=int, default=666, help="Random seed to have reproducible results.")
-    parser.add_argument("--threshold", dest="thresh", type=float, default=0.2,
+    parser.add_argument("-t", "--threshold", dest="thresh", type=float, default=0.25,
                         help="Threshold for binary classification of signal after log10 normalization.")
     return parser.parse_args()
 
@@ -291,7 +311,7 @@ def main():
     random.seed(params.seed)
     name = params.name
     data_dir = params.dir
-    out_dir = osp.join(data_dir, 'data_binary_WT2_features')
+    out_dir = osp.join(data_dir, 'data_binary_dna')
     if not osp.exists(out_dir):
         os.mkdir(out_dir)
         
@@ -301,12 +321,12 @@ def main():
     seqs_bed = osp.join(data_dir, 'WT2_0based.bed')
     pvalue_file = osp.join(data_dir, 'p-value.bw')
     out_file = osp.join(data_dir, 'peak_signals.tsv')
-    save_peak_signals_separate(seqs_bed, pvalue_file, out_file)
+    save_peak_signals_separate(seqs_bed, pvalue_file, out_file,thresh=params.thresh)
     
     # Uncomment or leave empty if no extra features
     additional_feature_files = [
-        osp.join(data_dir, 'histone_marks.bw'),
-        osp.join(data_dir, 'ATAC2.bw')
+        # osp.join(data_dir, 'histone_marks.bw'),
+        # osp.join(data_dir, 'ATAC2.bw')
     ]
     # additional_feature_files = []  
 
@@ -383,5 +403,32 @@ def main():
     print(f"{name}: The positive test data are: {len(seqs_te)}")
     print(f"{name}: The negative test data are: {len(seqs_neg_te)}\n")
     
+        # ===== Save dataset summary =====
+    summary_file = osp.join(out_dir, f'{name}_dataset_summary.txt')
+
+    n_pos_train = len(seqs_tr)
+    n_neg_train = len(seqs_neg_tr)
+    n_pos_test = len(seqs_te)
+    n_neg_test = len(seqs_neg_te)
+
+    with open(summary_file, 'w') as f:
+        f.write("Dataset summary\n")
+        f.write("=================\n")
+        f.write(f"Threshold (log10 normalized): {params.thresh}\n\n")
+
+        f.write("Train data\n")
+        f.write(f"  Positive: {n_pos_train}\n")
+        f.write(f"  Negative: {n_neg_train}\n")
+        f.write(f"  Total   : {n_pos_train + n_neg_train}\n\n")
+
+        f.write("Test data\n")
+        f.write(f"  Positive: {n_pos_test}\n")
+        f.write(f"  Negative: {n_neg_test}\n")
+        f.write(f"  Total   : {n_pos_test + n_neg_test}\n")
+
+    print(f"Dataset summary saved to: {summary_file}")
+
 
 if __name__ == '__main__':  main()
+
+
