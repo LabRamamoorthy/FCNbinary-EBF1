@@ -1,0 +1,13 @@
+=== PER-BASE METRICS (FINAL EPOCH) ===
+Accuracy:  0.9345
+Precision: 0.6017
+Recall:    0.8185
+F1-score:  0.6936
+AUC:       0.9672
+
+=== PER-SEQUENCE METRICS (>= 12 bp rule) ===
+Accuracy:  0.9013
+Precision: 0.8266
+Recall:    0.9392
+F1-score:  0.8793
+AUC:       0.9085

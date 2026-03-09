@@ -15,14 +15,50 @@ from hyperopt import hp
 from hyperopt.pyll.stochastic import sample
 
 # custom modules
-from VanillaFCNmotif import FCNA, FCNsignal, BPNet
+# from VanillaFCNmotif import FCNA, FCNsignal, BPNet
 from FCNmotif import FCNsignalMod
 from datasets import EPIDataSet
 from trainer import Trainer
 from loss import BinaryLoss
-
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+class EarlyStopping:
+    """Early stopping to stop training when validation loss doesn't improve."""
+    
+    def __init__(self, patience=2, min_delta=0, verbose=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.verbose = verbose
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.best_epoch = 0
+        
+    def __call__(self, val_loss, epoch):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.best_epoch = epoch
+            if self.verbose:
+                print(f'Initial validation loss: {val_loss:.6f}')
+        elif val_loss > self.best_loss - self.min_delta:
+            # No improvement
+            self.counter += 1
+            if self.verbose:
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:
+                self.early_stop = True
+                if self.verbose:
+                    print(f'Early stopping triggered! No improvement for {self.patience} epochs.')
+                    print(f'Best validation loss was {self.best_loss:.6f} at epoch {self.best_epoch}')
+        else:
+            # Improvement
+            if self.verbose:
+                print(f'Validation loss improved from {self.best_loss:.6f} to {val_loss:.6f}')
+            self.best_loss = val_loss
+            self.best_epoch = epoch
+            self.counter = 0
+            
+        return self.early_stop
 
 def randomparams():
     """Sample random hyperparameters."""
@@ -70,6 +106,10 @@ def get_args():
         "-c", dest="checkpoint", type=str, default='./models/',
         help="Directory to save model checkpoints and outputs."
     )
+    parser.add_argument(
+        "-p", dest="patience", type=int, default=2,
+        help="Early stopping patience (number of epochs without improvement)."
+    )
     return parser.parse_args()
 
 
@@ -81,6 +121,10 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed) 
+    torch.backends.cudnn.deterministic = True 
+    torch.backends.cudnn.benchmark = False 
+
 
     # Checkpoint directory
     if not osp.exists(args.checkpoint):
@@ -95,7 +139,6 @@ def main():
         if torch.cuda.is_available():
             os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
             device = torch.device("cuda:0")
-            torch.cuda.manual_seed(args.seed)
             print(f"Using GPU(s): {args.gpu}")
         else:
             print("CUDA not available. Falling back to CPU.")
@@ -121,8 +164,11 @@ def main():
     # Training data
     data_tr, signal_tr = seqs[index_train], signals[index_train]
     train_data = EPIDataSet(data_tr, signal_tr)
+
+    g = torch.Generator()
+    g.manual_seed(args.seed)
     train_loader = DataLoader(
-        train_data, batch_size=args.batch_size, shuffle=True, num_workers=0
+        train_data, batch_size=args.batch_size, shuffle=True, num_workers=0, generator=g  
     )
 
     # Validation data
@@ -140,7 +186,7 @@ def main():
         print(f"Trial {trial + 1} params: {params}")
 
         # Model
-        model = FCNsignalMod(motiflen=motifLen, n_features=0)
+        model = FCNsignalMod(motiflen=motifLen, n_features=1)
 
         # Optimizer & Scheduler
         optimizer = optim.Adam(
@@ -150,6 +196,8 @@ def main():
             weight_decay=params['weight']
         )
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+
+        early_stopping = EarlyStopping(patience=args.patience, verbose=True)
 
         # Criterion with class imbalance handling
         executor = Trainer(
@@ -162,6 +210,7 @@ def main():
             train_loader=train_loader,
             test_loader=val_loader,
             scheduler=scheduler,
+            early_stopping=early_stopping,
         )
 
         pos_weight = executor.compute_pos_weight()

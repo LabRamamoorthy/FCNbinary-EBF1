@@ -11,17 +11,16 @@ import pyBigWig
 
 SEQ_LEN = 1001
 OFFSET = 3000
-INDEX = ['chr' + str(i + 1) for i in range(23)]
-INDEX[22] = 'chrX'
 SMOOTH = True
 WINDOW = 15
-THRESHOLD = 0.4
+THRESHOLD = 0.05
 ROOT = osp.dirname(__file__)
 CHROM = {}
 with open('Genome/mm9.chrom.sizes') as f:
     for i in f:
         line_split = i.strip().split()
         CHROM[line_split[0]] = int(line_split[1])
+INDEX = list(CHROM.keys())
 
 
 def one_hot(sequence_dict, chrom, start, end):

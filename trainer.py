@@ -11,8 +11,7 @@ from sklearn.metrics import (
 
 import matplotlib.pyplot as plt
 import torch
-from loss import BinaryLoss # FocalLoss
-
+from loss import BinaryLoss 
 plt.rcParams["font.family"] = "serif"
 
 
@@ -21,12 +20,7 @@ class Trainer(object):
 
     def __init__(self, model, optimizer, criterion, device, checkpoint,
                  max_epoch, train_loader, test_loader, scheduler,
-                 threshold=0.5, seq_min_run=6):
-        """
-        Args:
-            signal_thresh: minimal value to consider a position as positive
-            seq_min_run: minimal number of consecutive bases to call a sequence positive
-        """
+                 threshold=0.5, seq_min_run=12, early_stopping=None):
         self.model = model
         self.optimizer = optimizer
         self.device = device
@@ -37,6 +31,7 @@ class Trainer(object):
         self.checkpoint = checkpoint
         self.threshold = threshold
         self.seq_min_run = seq_min_run
+        self.early_stopping = early_stopping
 
         self.epoch = 0
         self.best_f1 = 0
@@ -53,14 +48,7 @@ class Trainer(object):
 
         # # sequence-level metrics container
         # self.sequence_metrics = None
-        # self.criterion = criterion
-
-        if isinstance(criterion, BinaryLoss) and hasattr(criterion, 'use_logits'):
-            pos_weight = self.compute_pos_weight()
-            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            print("Using BCEWithLogitsLoss with computed pos_weight")
-        else:
-            self.criterion = criterion
+        self.criterion = criterion
 
     def compute_pos_weight(self):
         """Compute pos_weight for BCEWithLogitsLoss based on class distribution"""
@@ -90,14 +78,6 @@ class Trainer(object):
         pos_weight_tensor = torch.tensor(pos_weight_value, dtype=torch.float32).to(self.device)
         return pos_weight_tensor
 
-
-    # def compute_pos_weight(self):
-    #     """Use a light constant pos_weight for balanced dataset."""
-    #     pos_weight_value = 1.5   # slightly more weight for positives
-    #     pos_weight_tensor = torch.tensor(pos_weight_value, dtype=torch.float32).to(self.device)
-    #     print(f"Using constant pos_weight = {pos_weight_value:.3f}")
-    #     return pos_weight_tensor
-
     def has_run_of_ones(self, arr, min_run=None):
         """
         Return True if arr (1D array-like of 0/1) contains >= min_run consecutive ones.
@@ -116,11 +96,7 @@ class Trainer(object):
         return False
 
     def compute_sequence_metrics(self, min_run=None):
-        """
-        Compute per-sequence metrics using the >=min_run consecutive-ones rule.
-        Uses self.val_truths and self.val_preds which are lists of numpy arrays.
-        Returns: (acc, prec, rec, f1, auc, seq_true_list, seq_pred_list)
-        """
+
         if min_run is None:
             min_run = self.seq_min_run
 
@@ -170,9 +146,51 @@ class Trainer(object):
 
         return seq_acc, seq_prec, seq_rec, seq_f1, seq_auc, seq_true, seq_pred
 
+    def collect_final_predictions(self):
+
+        print("Collecting final predictions for plotting...")
+        
+        # Collect training predictions
+        self.model.eval()
+        self.train_preds = []
+        self.train_truths = []
+        
+        with torch.no_grad():
+            for sample_batch in self.train_loader:
+                X_data = sample_batch["data"].float().to(self.device)
+                signal = sample_batch["signal"].float().to(self.device)
+                
+                if signal.ndim == 3:
+                    signal = signal.squeeze(1)
+                
+                pred = self.model(X_data)
+                probs = torch.sigmoid(pred)
+                
+                self.train_preds.append(probs.cpu().numpy())
+                self.train_truths.append(signal.cpu().numpy())
+        
+        # Collect validation predictions
+        self.val_preds = []
+        self.val_truths = []
+        
+        with torch.no_grad():
+            for sample_batch in self.test_loader:
+                X_data = sample_batch["data"].float().to(self.device)
+                signal = sample_batch["signal"].float().to(self.device)
+                
+                if signal.ndim == 3:
+                    signal = signal.squeeze(1)
+                
+                pred = self.model(X_data)
+                probs = torch.sigmoid(pred)
+                
+                self.val_preds.append(probs.cpu().numpy())
+                self.val_truths.append(signal.cpu().numpy())
+
     def train(self):
         """Training the model"""
         self.model.to(self.device)
+        early_stopped = False
 
         for epoch in range(self.max_epoch):
             self.model.train()
@@ -195,17 +213,9 @@ class Trainer(object):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                # for name, param in self.model.named_parameters():
-                #     if param.grad is not None:
-                #         print(name, param.grad.norm().item())
                 self.optimizer.step()
 
                 epoch_loss += loss.item()
-
-                if epoch == self.max_epoch - 1:
-                    probs = torch.sigmoid(pred)  
-                    self.train_preds.append(probs.detach().cpu().numpy()) 
-                    self.train_truths.append(signal.cpu().numpy())
 
                 print(f"epoch/i_batch: {epoch}/{i_batch} --- "
                       f"loss: {loss.item():.4f} --- "
@@ -215,12 +225,30 @@ class Trainer(object):
             self.train_losses.append(avg_epoch_loss)
 
             # Validation
-            self.test()
+            val_loss = self.test()
             self.scheduler.step()
 
+            # Early stopping check
+            if self.early_stopping is not None:
+                if self.early_stopping(val_loss, epoch):
+                    print(f"\nEarly stopping triggered at epoch {epoch+1}")
+                    print(f"Best epoch was {self.early_stopping.best_epoch+1} "
+                          f"with val loss: {self.early_stopping.best_loss:.6f}")
+                    early_stopped = True
+                    break
+
+        # Collect final predictions for plotting (whether early stopped or completed)
+        print("\nTraining finished. Generating final outputs...")
+        self.collect_final_predictions()
+        
         # Plot and save results
         self.plot_results()
         self.save_val_outputs()
+
+        if early_stopped:
+            print(f"Training stopped early at epoch {epoch+1}/{self.max_epoch}")
+        else:
+            print(f"Training completed all {self.max_epoch} epochs")
 
         return self.best_f1, self.state_best
 
@@ -266,11 +294,6 @@ class Trainer(object):
 
         self.val_metrics.append((acc, prec, rec, f1, auc, val_loss))
 
-        if self.epoch == self.max_epoch - 1:
-            # store batch-wise arrays for plotting and sequence-level evaluation
-            self.val_preds = p_all
-            self.val_truths = t_all
-
         if f1 > self.best_f1:
             self.best_f1 = f1
             self.state_best = deepcopy(self.model.state_dict())
@@ -278,14 +301,15 @@ class Trainer(object):
         print(f"ACC: {acc:.3f}\tPREC: {prec:.3f}\tREC: {rec:.3f}\t"
               f"F1: {f1:.3f}\tAUC: {auc:.3f}")
 
-        return f1
+        return val_loss
 
     def plot_results(self):
         """Plot training/validation loss, confusion matrix, and sample predictions"""
-        # --- Extract validation losses ---
+        # --- Extract validation losses and best F1 ---
         val_losses = [x[5] for x in self.val_metrics] if len(self.val_metrics) > 0 else []
+        best_f1_score = self.best_f1
 
-        # --- Plot Training vs Validation Loss ---
+        # --- Plot Training vs Validation Loss with F1 in title ---
         plt.figure(figsize=(8, 5))
         if len(self.train_losses) > 0:
             plt.plot(self.train_losses, label="Training Loss ")
@@ -293,7 +317,7 @@ class Trainer(object):
             plt.plot(val_losses, label="Validation Loss ", linewidth=2)
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
-        plt.title("Training and Validation Loss")
+        plt.title(f"Training and Validation Loss ")
         plt.legend()
         plt.tight_layout()
         plt.savefig(osp.join(self.checkpoint, "loss_curve.png"))
@@ -333,6 +357,7 @@ class Trainer(object):
             y_pred_prob_train = np.concatenate(self.train_preds).flatten()
             y_pred_train = (y_pred_prob_train >= self.threshold).astype(int)
 
+            # Count-based confusion matrix
             cm_train = confusion_matrix(y_true_train, y_pred_train)
             disp_train = ConfusionMatrixDisplay(confusion_matrix=cm_train)
             disp_train.plot(cmap="Blues", values_format="d")
@@ -341,6 +366,17 @@ class Trainer(object):
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_train_per_base.png"))
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_train_per_base.pdf"))
             plt.close()
+
+            # Percentage-based confusion matrix
+            cm_train_pct = cm_train.astype('float') / cm_train.sum(axis=1)[:, np.newaxis] * 100
+            disp_train_pct = ConfusionMatrixDisplay(confusion_matrix=cm_train_pct)
+            disp_train_pct.plot(cmap="Blues", values_format=".2f")
+            plt.title("Training Confusion Matrix (Per-base, %)")
+            plt.tight_layout()
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_train_per_base_pct.png"))
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_train_per_base_pct.pdf"))
+            plt.close()
+
         # --- VALIDATION CONFUSION MATRIX ---
         if len(self.val_preds) > 0:
             # per-base arrays
@@ -348,7 +384,7 @@ class Trainer(object):
             y_pred_prob_base = np.concatenate(self.val_preds).flatten()
             y_pred_base = (y_pred_prob_base >= self.threshold).astype(int)
 
-            # Per-base Confusion Matrix 
+            # Per-base Confusion Matrix (counts)
             cm_base = confusion_matrix(y_true_base, y_pred_base)
             disp_base = ConfusionMatrixDisplay(confusion_matrix=cm_base)
             disp_base.plot(cmap="Blues", values_format="d")
@@ -356,6 +392,16 @@ class Trainer(object):
             plt.tight_layout()
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_base.png"))
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_base.pdf"))
+            plt.close()
+
+            # Per-base Confusion Matrix (percentages)
+            cm_base_pct = cm_base.astype('float') / cm_base.sum(axis=1)[:, np.newaxis] * 100
+            disp_base_pct = ConfusionMatrixDisplay(confusion_matrix=cm_base_pct)
+            disp_base_pct.plot(cmap="Blues", values_format=".2f")
+            plt.title("Per-base Confusion Matrix (%)")
+            plt.tight_layout()
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_base_pct.png"))
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_base_pct.pdf"))
             plt.close()
 
             # Precision-Recall Curve (per-base)
@@ -375,7 +421,7 @@ class Trainer(object):
             # Sequence-level metrics & confusion matrix
             seq_acc, seq_prec, seq_rec, seq_f1, seq_auc, seq_true_list, seq_pred_list = self.compute_sequence_metrics()
 
-            # Sequence-level confusion matrix
+            # Sequence-level confusion matrix (counts)
             cm_seq = confusion_matrix(seq_true_list, seq_pred_list)
             disp_seq = ConfusionMatrixDisplay(confusion_matrix=cm_seq)
             disp_seq.plot(cmap="Blues", values_format="d")
@@ -383,6 +429,16 @@ class Trainer(object):
             plt.tight_layout()
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_sequence.png"))
             plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_sequence.pdf"))
+            plt.close()
+
+            # Sequence-level confusion matrix (percentages)
+            cm_seq_pct = cm_seq.astype('float') / cm_seq.sum(axis=1)[:, np.newaxis] * 100
+            disp_seq_pct = ConfusionMatrixDisplay(confusion_matrix=cm_seq_pct)
+            disp_seq_pct.plot(cmap="Blues", values_format=".2f")
+            plt.title(f"Sequence-level Confusion Matrix (>= {self.seq_min_run}bp run, %)")
+            plt.tight_layout()
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_sequence_pct.png"))
+            plt.savefig(osp.join(self.checkpoint, "confusion_matrix_per_sequence_pct.pdf"))
             plt.close()
 
             # store sequence metrics

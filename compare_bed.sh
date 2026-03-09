@@ -1,7 +1,7 @@
 TRUE=$1
 PRED=$2
 
-OUTDIR="test_predict/output/dynamic_pos_0.4/bedtools_results"
+OUTDIR="test_predict/output/dynamic_pos_0.25_again2/bedtools_results"
 mkdir -p ${OUTDIR}
 
 # Remove header
