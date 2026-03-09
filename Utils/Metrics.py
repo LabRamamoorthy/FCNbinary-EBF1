@@ -97,3 +97,19 @@ def EvaluationMetricsToken(y_pred, y_true, y_logits, kmer):
     Metrics[5] = auc(rec, pre)
 
     return np.around(Metrics, decimals=3)
+
+def EvaluationMetricsToken2(y_pred, y_true, y_logits):
+    if not isinstance(y_pred, np.int32):
+        y_pred = y_pred.astype(np.int32)
+    if not isinstance(y_true, np.int32):
+        y_true = y_true.astype(np.int32)
+
+    Metrics = np.zeros(shape=6, dtype=np.float32)
+    Metrics[0] = accuracy_score(y_true=y_true, y_pred=y_pred)
+    Metrics[1] = precision_score(y_true=y_true, y_pred=y_pred)
+    Metrics[2] = recall_score(y_true=y_true, y_pred=y_pred)
+    Metrics[3] = f1_score(y_true=y_true, y_pred=y_pred)
+    Metrics[4] = roc_auc_score(y_true=y_true, y_score=y_logits)
+    pre, rec, _ = precision_recall_curve(y_true=y_true, probas_pred=y_logits)
+    Metrics[5] = auc(rec, pre)
+    return np.around(Metrics, decimals=3)

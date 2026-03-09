@@ -57,3 +57,18 @@ class MyDataSetPredictBERT(dataset.Dataset):
 
     def __len__(self):
         return len(self.sequence)
+
+class MyDataSetBERT2(dataset.Dataset):
+    def __init__(self, input_ids, attention_mask, offset_mapping, dense_label, label):
+        self.input_ids       = input_ids
+        self.attention_mask  = attention_mask
+        self.offset_mapping  = offset_mapping
+        self.dense_label     = dense_label
+        self.label           = label
+
+    def __getitem__(self, item):
+        return (self.input_ids[item], self.attention_mask[item],
+                self.offset_mapping[item], self.dense_label[item], self.label[item])
+
+    def __len__(self):
+        return len(self.label)

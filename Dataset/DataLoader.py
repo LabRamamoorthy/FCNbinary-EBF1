@@ -61,3 +61,14 @@ def SampleLoaderPredictUnlabelBERT(Sequence, BatchSize):
         drop_last=False
     )
     return Loader
+
+
+def SampleLoaderBERT2(input_ids, attention_mask, offset_mapping, DenseLabel, Label, BatchSize):
+    Loader = DataLoader(
+        dataset=MyDataSet.MyDataSetBERT2(input_ids, attention_mask, offset_mapping, DenseLabel, Label),
+        batch_size=BatchSize,
+        shuffle=True,
+        num_workers=0,
+        drop_last=False
+    )
+    return Loader

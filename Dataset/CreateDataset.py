@@ -1,98 +1,69 @@
-import scipy.io
 import os
 import pandas as pd
-from Utils.Shuffle import dinuclShuffle
 
+chip_seq_root = "ChIP-seq"
+file_list = os.listdir(chip_seq_root)
 
-def seq2kmer(seq, k):
-    """
-    Convert original sequence to kmers
+for tf_name in file_list:
+    print(f"Processing: {tf_name}")
+    dataset_path = os.path.join(chip_seq_root, tf_name)
 
-    Arguments:
-    seq -- str, original sequence.
-    k -- int, kmer of length k specified.
+    seq_path = os.path.join(dataset_path, "sequence.txt")
+    lab_path = os.path.join(dataset_path, "label.txt")
 
-    Returns:
-    kmers -- str, kmers separated by space
+    if not os.path.isfile(seq_path) or not os.path.isfile(lab_path):
+        print(f"  Skipping {tf_name}: missing sequence.txt or label.txt")
+        continue
 
-    """
-    kmer = [seq[x:x + k] for x in range(len(seq) + 1 - k)]
-    kmers = " ".join(kmer)
-    return kmers
+    sequence    = pd.read_csv(seq_path, header=None)
+    dense_label = pd.read_csv(lab_path, header=None)
 
+    n      = len(sequence)
+    n_test = n // 5
 
-def deleteByStart(s, start, kmer):
-    # 找出字符串在原始字符串中的位置，开始位置是：开始始字符串的最左边第一个位置
-    x1 = s.index(start)
-    # 找出两个字符串的内容
-    x2 = s[:x1]
-    x3 = s[x1+kmer-1:]
-    # 将内容替换为控制符串
-    result = x2 + x3
-    return result
+    baseline_path = os.path.join(dataset_path, "baseline")
+    os.makedirs(baseline_path, exist_ok=True)
 
+    with open(os.path.join(baseline_path, "seq_train.txt"), "w") as fst, \
+         open(os.path.join(baseline_path, "seq_test.txt"),  "w") as fse, \
+         open(os.path.join(baseline_path, "lab_train.txt"), "w") as flt, \
+         open(os.path.join(baseline_path, "lab_test.txt"),  "w") as fle:
 
-fileList = os.listdir('ChIP-seq')
-
-for file in fileList:
-    print(file)
-    dataset_path = 'ChIP-seq/' + file
-
-    sequence = pd.read_csv(dataset_path + '/sequence.txt', header=None)
-    denseLabel = pd.read_csv(dataset_path + '/label.txt', header=None)
-
-    baseline_path = dataset_path + '/baseline'
-    os.makedirs(baseline_path)
-
-    seq_train = open(baseline_path + '/seq_train.txt', 'a')
-    seq_test = open(baseline_path + '/seq_test.txt', 'a')
-    lab_train = open(baseline_path + '/lab_train.txt', 'a')
-    lab_test = open(baseline_path + '/lab_test.txt', 'a')
-
-    for i in range(len(sequence)):
-
-        if i < len(sequence) // 5:
-            seq_test.write(str(sequence[0][i]) + '\n')
-            lab_test.write(str(denseLabel[0][i]) + '\n')
-
-        else:
-            seq_train.write(str(sequence[0][i]) + '\n')
-            lab_train.write(str(denseLabel[0][i]) + '\n')
-
-    seq_train.close()
-    seq_test.close()
-    lab_train.close()
-    lab_test.close()
-
-    for kmer in range(3, 7):
-        out_path = dataset_path + '/' + str(kmer) + '-mer'
-        os.makedirs(out_path)
-
-        train = open(out_path + '/train.txt', 'a')
-        train.write('sequence' + '\t' + 'denseLabel' + '\t' + 'label' + '\n')
-        test = open(out_path + '/test.txt', 'a')
-        test.write('sequence' + '\t' + 'denseLabel' + '\t' + 'label' + '\n')
-
-        for i in range(len(sequence)):
-
-            seq = str(sequence[0][i])
-            kmer_seq = seq2kmer(seq, kmer)
-            if i % 2 == 0:
-                dense = deleteByStart(str(denseLabel[0][i]), '1', kmer)
-                label = '1'
+        for i in range(n):
+            if i < n_test:
+                fse.write(str(sequence[0][i])    + "\n")
+                fle.write(str(dense_label[0][i]) + "\n")
             else:
-                dense = str(denseLabel[0][i])[kmer-1:]
-                label = '0'
+                fst.write(str(sequence[0][i])    + "\n")
+                flt.write(str(dense_label[0][i]) + "\n")
 
-            if i < len(sequence) // 5:
-                test.write(kmer_seq + '\t' + dense + '\t' + label + '\n')
+    dnabert2_path = os.path.join(dataset_path, "dnabert2")
+    os.makedirs(dnabert2_path, exist_ok=True)
+
+    header = "sequence\tdenseLabel\tlabel\n"
+
+    with open(os.path.join(dnabert2_path, "train.txt"), "w") as f_tr, \
+         open(os.path.join(dnabert2_path, "test.txt"),  "w") as f_te:
+
+        f_tr.write(header)
+        f_te.write(header)
+
+        for i in range(n):
+            raw_seq   = str(sequence[0][i])
+            raw_dense = str(dense_label[0][i])
+
+            if i % 2 == 0:   # positive sample
+                label = "1"
+            else:             # negative sample
+                label = "0"
+
+            line = f"{raw_seq}\t{raw_dense}\t{label}\n"
+
+            if i < n_test:
+                f_te.write(line)
             else:
-                train.write(kmer_seq + '\t' + dense + '\t' + label + '\n')
-        train.close()
-        test.close()
+                f_tr.write(line)
 
+    print(f"  -> {n_test} test / {n - n_test} train rows -> {dnabert2_path}")
 
-
-
-
-
+print("Done.")

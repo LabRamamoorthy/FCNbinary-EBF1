@@ -100,3 +100,20 @@ def DataReaderPrecitBERT(path):
     Sequence = list(map(seq2kmer, Sequence))
 
     return Sequence
+
+def DataReaderBERT2(TFName, DataSetName):
+    trainDataset = pd.read_csv('../Dataset/' + DataSetName + '/' + TFName + '/dnabert2/train.txt', sep='\t')
+    TrainSequence = trainDataset['sequence'].tolist()
+    TrainDenseLabels = []
+    TrainLabels = trainDataset['label'].tolist()
+    for row in trainDataset['denseLabel']:
+        TrainDenseLabels.append(list(map(int, [label for label in row])))
+
+    testDataset = pd.read_csv('../Dataset/' + DataSetName + '/' + TFName + '/dnabert2/test.txt', sep='\t')
+    TestSequence = testDataset['sequence'].tolist()
+    TestDenseLabels = []
+    TestLabels = testDataset['label'].tolist()
+    for row in testDataset['denseLabel']:
+        TestDenseLabels.append(list(map(int, [label for label in row])))
+
+    return TrainSequence, TrainDenseLabels, TrainLabels, TestSequence, TestDenseLabels, TestLabels
