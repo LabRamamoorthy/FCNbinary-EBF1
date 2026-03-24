@@ -1,0 +1,1 @@
+cmd = test_predict/output/fused/bedtools_results/True_in_Pred.bed mm9 test_predict/output/fused/homer/overlap -find motif/motif1.similar2.motif -size given
