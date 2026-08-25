@@ -1,1 +1,0 @@
-cmd = test_predict/output/fused_0.3_0.7/bedtools_results/True_only.bed mm9 test_predict/output/fused_0.3_0.7/homer/True_only -find motif/motif1.similar2.motif -size given
