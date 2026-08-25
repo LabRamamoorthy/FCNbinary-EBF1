@@ -179,7 +179,7 @@ def main():
     parser.add_argument("--negative_ratio", type=int, default=1)
     parser.add_argument("--expand_bp", type=int, default=3000,
                         help="Expand peak coordinates by this many bp on each side "
-                             "when excluding regions for negative sampling (default: 0)")
+                             "when excluding regions for negative sampling")
     parser.add_argument("--max_n_fraction", type=float, default=0,
                         help="Maximum fraction of N bases allowed in a negative window (default: 0.1)")
     parser.add_argument("--seed", type=int, default=42)

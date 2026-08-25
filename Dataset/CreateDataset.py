@@ -1,3 +1,4 @@
+# it is for creating dataset for DNABERT2
 import os
 import pandas as pd
 
@@ -51,7 +52,6 @@ for tf_name in file_list:
         for i in range(n):
             raw_seq   = str(sequence[0][i])
             raw_dense = str(dense_label[0][i])
-
             if i % 2 == 0:   # positive sample
                 label = "1"
             else:             # negative sample
