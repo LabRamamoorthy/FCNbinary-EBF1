@@ -1,4 +1,3 @@
-# coding:utf-8
 import os.path as osp
 import os
 import sys
@@ -16,11 +15,7 @@ WINDOW = 15
 THRESHOLD = 0.05
 ROOT = osp.dirname(__file__)
 CHROM = {}
-with open('Genome/mm9.chrom.sizes') as f:
-    for i in f:
-        line_split = i.strip().split()
-        CHROM[line_split[0]] = int(line_split[1])
-INDEX = list(CHROM.keys())
+INDEX = []
 
 
 def one_hot(sequence_dict, chrom, start, end):
@@ -70,17 +65,27 @@ def pos_location(chrom, start, end):
     return int(start_update), int(end_update)
 
 
-# upstream of positive peaks
 def neg_location(chrom, start, end):
-    start_update = start - OFFSET
-    if start_update < 0:
-        start_update = 0
+    start_p, end_p = pos_location(chrom, start, end)
+    end_update = start_p - OFFSET
+    start_update = end_update - SEQ_LEN
+    
+    if start_update >= 0:
+        return int(start_update), int(end_update)
+    
+    start_update = end_p + OFFSET
     end_update = start_update + SEQ_LEN
-
+    
+    if end_update > CHROM[chrom]:
+        end_update = CHROM[chrom]
+        start_update = end_update - SEQ_LEN
+        if start_update < 0:
+            start_update = 0
+    
     return int(start_update), int(end_update)
 
 
-def get_data_local_neg(seqs_bed, sequence_dict, signal_file, max_neg, additional_feature_files=[]):
+def get_data_local_neg(seqs_bed, sequence_dict, signal_file, additional_feature_files=[]):
     seqs_neg = []
     signals_neg = []
     filtered_bed_lines = []
@@ -97,7 +102,7 @@ def get_data_local_neg(seqs_bed, sequence_dict, signal_file, max_neg, additional
         # for positive peaks
         signal = GetbigWig(signal_file, chrom, start_n, end_n)
         signal[np.isnan(signal)] = 0.
-        if max_neg <= max(signal):
+        if np.max(signal) > 0.8:
             continue
         seqs_neg.append(one_hot(sequence_dict, chrom, start_n, end_n))
         signals_neg.append(signal)
@@ -141,7 +146,11 @@ def get_data_local(seqs_bed, sequence_dict, signal_file, additional_feature_file
         else:
             signal = GetbigWig(signal_file, chrom, start_p, end_p)
             signal[np.isnan(signal)] = 0.
-            Max = np.max(signal)
+        if len(signal) < SEQ_LEN:
+            signal = np.pad(signal, (0, SEQ_LEN - len(signal)), mode='constant')
+        else:
+            signal = signal[:SEQ_LEN]
+        Max = np.max(signal)
         if Max == 0: continue
         max_all.append(Max)
         signals.append(signal)
@@ -206,131 +215,72 @@ def extract_additional_features(bed_lines, feature_files, location_func):
     all_feats = np.transpose(all_feats, (1, 0, 2))  # [N, F, SEQ_LEN]
     return all_feats
 
-def save_peak_signals_separate(
-    seqs_bed,
-    signal_file,
-    out_file,
-    smooth=SMOOTH,
-    window=WINDOW,
-    offset=OFFSET,
-    thresh=THRESHOLD
-):
-    """
-    Save per-peak signals (positive and negative) to a TSV file.
-    Also saves binary signal after log10 normalization.
-    """
-    with open(seqs_bed) as f_in, open(out_file, 'w') as f_out:
-        f_out.write(
-            'peak_type\tchrom\tstart\tend\t'
-            'raw_signal\tlog_signal\tbinary_signal\n'
-        )
-
-        for line in f_in:
-            chrom, start_s, end_s = line.strip().split()[:3]
-            start, end = int(start_s), int(end_s)
-
-            if chrom not in CHROM:
-                continue
-
-            # ================= POSITIVE =================
-            start_p, end_p = pos_location(chrom, start, end)
-            start_p = max(0, start_p)
-            end_p = min(end_p, CHROM[chrom])
-            if end_p <= start_p:
-                continue
-
-            raw = GetbigWig(signal_file, chrom, start_p, end_p)
-            raw[np.isnan(raw)] = 0.
-
-            if smooth:
-                sig = Smoothavg(raw, window)
-            else:
-                sig = raw
-
-            # pad / crop
-            if len(sig) < SEQ_LEN:
-                sig = np.pad(sig, (0, SEQ_LEN - len(sig)))
-            else:
-                sig = sig[:SEQ_LEN]
-
-            log_sig = np.log10(1 + sig)
-            bin_sig = (log_sig >= thresh).astype(np.int8)
-
-            f_out.write(
-                f"pos\t{chrom}\t{start_p}\t{end_p}\t"
-                f"{','.join(f'{x:.4f}' for x in raw)}\t"
-                f"{','.join(f'{x:.4f}' for x in log_sig)}\t"
-                f"{','.join(map(str, bin_sig))}\n"
-            )
-
-            # ================= NEGATIVE =================
-            start_n, end_n = neg_location(chrom, start, end)
-            start_n = max(0, start_n)
-            end_n = min(end_n, CHROM[chrom])
-            if end_n <= start_n:
-                continue
-
-            raw = GetbigWig(signal_file, chrom, start_n, end_n)
-            raw[np.isnan(raw)] = 0.
-
-            if smooth:
-                sig = Smoothavg(raw, window)
-            else:
-                sig = raw
-
-            if len(sig) < SEQ_LEN:
-                sig = np.pad(sig, (0, SEQ_LEN - len(sig)))
-            else:
-                sig = sig[:SEQ_LEN]
-
-            log_sig = np.log10(1 + sig)
-            bin_sig = (log_sig >= thresh).astype(np.int8)
-
-            f_out.write(
-                f"neg\t{chrom}\t{start_n}\t{end_n}\t"
-                f"{','.join(f'{x:.4f}' for x in raw)}\t"
-                f"{','.join(f'{x:.4f}' for x in log_sig)}\t"
-                f"{','.join(map(str, bin_sig))}\n"
-            )
-
 
 def get_args():
     parser = argparse.ArgumentParser(description="pre-process data.")
+
     parser.add_argument("-d", dest="dir", type=str, default='')
     parser.add_argument("-n", dest="name", type=str, default='')
-    parser.add_argument("-s", dest="seed", type=int, default=666, help="Random seed to have reproducible results.")
-    parser.add_argument("-t", "--threshold", dest="thresh", type=float, default=0.25,
+    parser.add_argument("-s", dest="seed", type=int, default=666,
+                        help="Random seed to have reproducible results.")
+    parser.add_argument("-t", "--threshold", dest="thresh", type=float, default=0.1,
                         help="Threshold for binary classification of signal after log10 normalization.")
+    parser.add_argument("--out_dir", type=str, required=True,
+                        help="Output directory.")
+    parser.add_argument("--seqs_bed", type=str, required=True,
+                        help="BED file containing peak coordinates.")
+    parser.add_argument("--pvalue_file", type=str, required=True,
+                        help="BigWig file containing the signal.")
+    parser.add_argument("--additional_feature_files", nargs="*", default=None,
+                        help="Additional BigWig feature files.")
+    parser.add_argument("--genome_fasta", type=str, required=True,
+                    help="Path to genome FASTA file.")
+    parser.add_argument("--chrom_sizes", type=str, required=True,
+                    help="Path to chromosome sizes file.")
+    parser.add_argument("--seq_len", type=int, default=1001,
+                        help="Sequence length.")
+
     return parser.parse_args()
 
 
 
 def main():
     params = get_args()
+
+    global SEQ_LEN
+    SEQ_LEN = params.seq_len
+
+    global CHROM, INDEX
+    CHROM = {}
+
+    with open(params.chrom_sizes) as f:
+        for i in f:
+            line_split = i.strip().split()
+            CHROM[line_split[0]] = int(line_split[1])
+
+    INDEX = list(CHROM.keys())
+
     random.seed(params.seed)
+
     name = params.name
     data_dir = params.dir
-    out_dir = osp.join(data_dir, 'data_binary_dna')
+    out_dir = params.out_dir
+
     if not osp.exists(out_dir):
-        os.mkdir(out_dir)
-        
-    sequence_dict = SeqIO.to_dict(SeqIO.parse(open('Genome/mm9.fa'), 'fasta'))
+        os.makedirs(out_dir, exist_ok=True)
+
+    sequence_dict = SeqIO.to_dict(
+        SeqIO.parse(params.genome_fasta, 'fasta')
+    )
+
     print('Experiment on %s dataset' % name)
 
-    seqs_bed = osp.join(data_dir, 'WT2_0based.bed')
-    pvalue_file = osp.join(data_dir, 'p-value.bw')
-    out_file = osp.join(data_dir, 'peak_signals.tsv')
-    save_peak_signals_separate(seqs_bed, pvalue_file, out_file,thresh=params.thresh)
-    
-    # Uncomment or leave empty if no extra features
-    additional_feature_files = [
-        # osp.join(data_dir, 'histone_marks.bw'),
-        # osp.join(data_dir, 'ATAC2.bw')
-    ]
-    # additional_feature_files = []  
+    seqs_bed = params.seqs_bed
+    pvalue_file = params.pvalue_file
+    additional_feature_files = params.additional_feature_files
 
     # ----- Positive samples -----
-    seqs, signals, max_neg, additional_feats = get_data_local(
+    seqs, signals, _, additional_feats = get_data_local(
         seqs_bed, sequence_dict, pvalue_file, additional_feature_files=additional_feature_files
     )
 
@@ -362,7 +312,7 @@ def main():
 
     # ----- Negative samples -----
     seqs_neg, signals_neg, additional_feats_neg = get_data_local_neg(
-        seqs_bed, sequence_dict, pvalue_file, max_neg, additional_feature_files=additional_feature_files
+    seqs_bed, sequence_dict, pvalue_file, additional_feature_files=additional_feature_files
     )
 
     signals_neg = np.log10(1 + signals_neg)
@@ -429,5 +379,4 @@ def main():
 
 
 if __name__ == '__main__':  main()
-
 

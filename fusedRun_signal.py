@@ -24,7 +24,6 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 HPARAMS = {
     # model
     "motiflen"          : 10,
-    "n_features"        : 0,
     "dropout"           : 0.2,
     "max_len"           : 512,
 
@@ -62,14 +61,14 @@ HPARAMS = {
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="FusedModel: FCNsignalMod + BERTSNR for base-resolution TFBS prediction"
+        description="FusedModel: FCNsignalMod + BERTSNR2 for base-resolution TFBS prediction"
     )
     parser.add_argument(
         "-d", dest="data_dir", type=str, required=True,
         help=(
             "Root output directory from dataset preparation. "
             "Expected structure: "
-            "<data_dir>/bertsnr/train/dataset.txt  and  "
+            "<data_dir>/bertsnr2/train/dataset.txt  and  "
             "<data_dir>/fcn/train.npz"
         )
     )
@@ -128,15 +127,15 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.bert_path,
                                               trust_remote_code=True)
 
-    bertsnr_path = osp.join(args.data_dir, "bertsnr", "train", "dataset.txt")
+    bertsnr_path = osp.join(args.data_dir, "bertsnr2", "train", "dataset.txt")
     fcn_path     = osp.join(args.data_dir, "fcn", "train.npz")
 
     if not osp.exists(bertsnr_path):
-        raise FileNotFoundError(f"BERTsnr dataset not found: {bertsnr_path}")
+        raise FileNotFoundError(f"BERTSNR2 dataset not found: {bertsnr_path}")
     if not osp.exists(fcn_path):
         raise FileNotFoundError(f"FCN dataset not found: {fcn_path}")
 
-    print(f"Loading BERTsnr data from : {bertsnr_path}")
+    print(f"Loading BERTSNR2 data from : {bertsnr_path}")
     print(f"Loading FCN data from     : {fcn_path}")
 
     # dataset
@@ -146,6 +145,8 @@ def main():
         tokenizer   = tokenizer,
         max_len     = HPARAMS["max_len"],
     )
+    n_features = full_dataset.n_features        
+    print(f"Extra BigWig features detected: {n_features}")
 
     n_total     = len(full_dataset)
     n_val       = max(1, int(n_total * HPARAMS["val_split"]))
@@ -180,7 +181,7 @@ def main():
     print("Building FusedModel...")
     model = FusedModel(
         motiflen    = HPARAMS["motiflen"],
-        n_features  = HPARAMS["n_features"],
+        n_features  = n_features,  
         dropout     = HPARAMS["dropout"],
         # freeze_bert = True,
     ).to(device)
@@ -282,7 +283,7 @@ def main():
         print(f"Best model saved → {model_path}")
 
     # save run config
-    config = {**vars(args), **HPARAMS, "best_val_loss": best_val_loss}
+    config = {**vars(args), **HPARAMS, "n_features": n_features, "best_val_loss": best_val_loss}
     config["adam_betas"] = list(config["adam_betas"])
     config_path = osp.join(args.checkpoint, "run_config.json")
     with open(config_path, 'w') as f:

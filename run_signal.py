@@ -25,7 +25,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 class EarlyStopping:
     """Early stopping to stop training when validation loss doesn't improve."""
     
-    def __init__(self, patience=2, min_delta=0, verbose=True):
+    def __init__(self, patience=5, min_delta=0, verbose=True):
         self.patience = patience
         self.min_delta = min_delta
         self.verbose = verbose
@@ -91,7 +91,7 @@ def get_args():
         help="Choose GPU device. Use '-1' for CPU. E.g., '0,1'."
     )
     parser.add_argument(
-        "-s", dest="seed", type=int, default=5,
+        "-s", dest="seed", type=int, default=42,
         help="Random seed for reproducibility."
     )
     parser.add_argument(
@@ -107,7 +107,7 @@ def get_args():
         help="Directory to save model checkpoints and outputs."
     )
     parser.add_argument(
-        "-p", dest="patience", type=int, default=2,
+        "-p", dest="patience", type=int, default=5,
         help="Early stopping patience (number of epochs without improvement)."
     )
     return parser.parse_args()
