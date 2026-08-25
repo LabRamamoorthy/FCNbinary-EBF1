@@ -105,16 +105,6 @@ python run_signal.py \
     -c /your_path/FCNsignal/models/EBF
 ```
 
-## Output
-
-A trained model is stored in the specified model directory.
-
-For example:
-
-```text
-/your_path/FCNsignal/models/EBF/model_best.pth
-```
-
 ---
 
 # Model Classification
@@ -143,10 +133,6 @@ python test_signal.py \
     -g 0 \
     -c /your_path/FCNsignal/models/EBF
 ```
-
-## Output
-
-The script generates `record.txt`, containing the results for the metrics.
 
 ---
 
@@ -181,20 +167,11 @@ python TFBS_locating.py \
     -c /your_path/FCNsignal/models/EBF
 ```
 
-## Output
-
-The outputs include:
-
-* Base-resolution predictions for the input sequences
-* Potential TF binding regions in BED format
-* Line plots showing the base-resolution predictions
 
 
 # Test Prediction
 
-The `test_prediction.py` script provides a command-line interface for running model inference directly on BED regions.
-
-Unlike the original dataset-based testing workflow, this script allows the user to specify the reference genome, chromosome sizes, input BED file, trained model, output directory, and optional BigWig features directly from the command line.
+The `test_prediction.py` script provides a running model inference directly on BED regions.
 
 ## Command
 
@@ -205,11 +182,11 @@ python test_prediction.py \
     --bed <> \
     --model <> \
     --output <> \
-    [--features <> ...] \
-    [--threshold <>] \
-    [--peak-bps <>] \
-    [--window <>] \
-    [--smooth]
+    --features <>  \
+    --threshold <> \
+    --peak-bps <> \
+    --window <> \
+    --smooth
 ```
 
 ## Arguments
