@@ -100,7 +100,7 @@ def main():
     print(f"Test samples: {len(dataset)}")
 
     # model
-    model = BertSNR.BERTSNR().to(device)
+    model = BertSNR2.BERTSNR2().to(device)
     state = torch.load(WEIGHTS_PATH, map_location=device)
     model.load_state_dict(state)
     model.eval()

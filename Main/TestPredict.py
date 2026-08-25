@@ -116,11 +116,11 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load tokenizer
-    print("[1/4] Loading DNABERT-2 tokenizer and BertSNR model...")
+    print("[1/4] Loading DNABERT-2 tokenizer and BertSNR2 model...")
     tokenizer = AutoTokenizer.from_pretrained(DNABERT2_PATH, trust_remote_code=True)
 
     # Load model
-    model = BERTSNR()
+    model = BERTSNR2()
     state_dict = torch.load(args.model_path, map_location=device)
     model.load_state_dict(state_dict)
     model.to(device)

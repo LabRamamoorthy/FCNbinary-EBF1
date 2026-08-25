@@ -329,7 +329,7 @@ for TF in os.listdir(DATASET_PATH):
     TestOffsets  = TestEncoded.pop('offset_mapping')
 
     LossFunction  = nn.BCELoss().cuda()
-    NeuralNetwork = Model.BertSNR.BERTSNR().cuda()
+    NeuralNetwork = Model.BertSNR2.BERTSNR2().cuda()
     t_total       = len(TrainSequence) * MaxEpoch // BatchSize
 
     no_decay = ["bias", "LayerNorm.weight"]
