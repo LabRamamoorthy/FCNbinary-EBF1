@@ -7,7 +7,6 @@ import numpy as np
 import os.path as osp
 from Bio import SeqIO
 import torch
-# custom functions defined by user
 from FCNmotif import FCNsignalMod
 torch.multiprocessing.set_sharing_strategy('file_system')
 import pandas as pd
@@ -19,7 +18,7 @@ import pyBigWig
 plt.rcParams["font.family"] = "serif"
 
 
-# ---------------- Helper functions ----------------
+#  Helper functions 
 
 def Smoothavg(x, window):
     if len(x) < window:
@@ -83,7 +82,7 @@ def one_hot(sequence_dict, chrom, start, end):
     return temp.transpose((0, 2, 1))
 
 
-# ---------------- Binary peak extraction ----------------
+#  Binary peak extraction 
 
 def locate_binary(parameters, sequence_dict, model, beds, outdir, bw, feature_files=None, smooth=True, chrom_sizes=None):
     model.eval()
@@ -145,7 +144,7 @@ def locate_binary(parameters, sequence_dict, model, beds, outdir, bw, feature_fi
     print(f"A total of {num_pos} positive positions (binary=1) found.")
     return beds_pos, signals_prob, signals_binary, true_signals
 
-# ---------------- Saving values ----------------
+#  Saving values 
 
 def save_per_base_true_values(signals_prob, signals_binary, true_signals, outdir,
                                        prob_threshold=0.5, true_threshold=0.1):
@@ -203,7 +202,7 @@ def save_per_base_true_values(signals_prob, signals_binary, true_signals, outdir
 
     print(f"Saved combined NPZ → {combined_npz}")
 
-# ---------------- Plotting ----------------
+#  Plotting 
 
 def lineplot_binary(signals_prob, signals_binary, true_signals, name, outdir, thres):
     for key in signals_prob.keys():
@@ -235,7 +234,7 @@ def lineplot_binary(signals_prob, signals_binary, true_signals, name, outdir, th
         plt.close()
 
 
-# ---------------- Utilities ----------------
+#  Utilities 
 
 def load_chrom_sizes(path):
     chrom_sizes = {}
@@ -260,7 +259,7 @@ def get_args():
     return parser.parse_args()
 
 
-# ---------------- Main ----------------
+#  Main 
 
 def main():
     args = get_args()
