@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
@@ -10,16 +11,11 @@ from fused_model import FusedModel
 
 # CONFIG
 
-FASTA_FILE       = "Genome/mm9.fa"
-BED_FILE         = "test_predict/input/ATAC_Extended.bed"
-MODEL_FILE       = "fusedModels/EBF_500_ATAC/best_model.pt"
-BERT_PATH        = "/home/ubuntu/data/dnabert2"
 THRESHOLD        = 0.5
 PEAK_BPS         = 10
 MAX_LEN          = 512
 
 # additional BigWig files used during training — leave empty if none
-EXTRA_BIGWIGS    = ["EBF/ATAC2.bw"]          # e.g.["EBF/ATAC2.bw"] ["atac.bw", "h3k27ac.bw"]
 SMOOTH           = True
 SMOOTH_WINDOW    = 15
 
@@ -161,6 +157,35 @@ class FusedTestDataset(Dataset):
             bw.close()
 
 
+# COMMAND LINE
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--fasta", required=True)
+parser.add_argument("--bed", required=True)
+parser.add_argument("--model", required=True)
+parser.add_argument("--bert", required=True)
+parser.add_argument("--output", required=True)
+parser.add_argument("--extra-bigwig", nargs="*", default=[])
+parser.add_argument("--threshold", type=float, default=THRESHOLD)
+parser.add_argument("--peak-bps", type=int, default=PEAK_BPS)
+parser.add_argument("--max-len", type=int, default=MAX_LEN)
+parser.add_argument("--smooth", action=argparse.BooleanOptionalAction, default=SMOOTH)
+parser.add_argument("--smooth-window", type=int, default=SMOOTH_WINDOW)
+args = parser.parse_args()
+
+FASTA_FILE       = args.fasta
+BED_FILE         = args.bed
+MODEL_FILE       = args.model
+BERT_PATH        = args.bert
+OUT_DIR          = args.output
+EXTRA_BIGWIGS    = args.extra_bigwig
+THRESHOLD        = args.threshold
+PEAK_BPS         = args.peak_bps
+MAX_LEN          = args.max_len
+SMOOTH           = args.smooth
+SMOOTH_WINDOW    = args.smooth_window
+
+
 # INFERENCE
 
 device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,6 +197,7 @@ test_dataset = FusedTestDataset(
     extra_bigwigs = EXTRA_BIGWIGS,
     smooth        = SMOOTH,
     smooth_window = SMOOTH_WINDOW,
+    max_len       = MAX_LEN,
 )
 test_loader  = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
@@ -183,7 +209,6 @@ model.to(device)
 model.eval()
 
 # output files
-OUT_DIR = "test_predict/output5/fused_bcell_atac"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 summary_with     = open(os.path.join(OUT_DIR, "test_with_peak.tsv"),         "w")
@@ -203,7 +228,7 @@ with torch.no_grad():
         fcn_input      = batch['fcn_input'].to(device)
         input_ids      = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
-        offset_mapping = batch['offset_mapping']  
+        offset_mapping = batch['offset_mapping']
         seq_id         = batch['seq_id'][0]
 
         # forward pass
@@ -243,6 +268,7 @@ summary_without.close()
 fullpred_with.close()
 fullpred_without.close()
 test_dataset.close()
+
 print("Done! Inference completed.")
 print(f"Sequences with peak    : {count_with}")
 print(f"Sequences without peak : {count_without}")
