@@ -1,0 +1,17 @@
+name: fcn
+channels:
+  - anaconda
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.6
+  - ucsc-bedgraphtobigwig
+  - perl-gd
+  - wget
+  - perl-xml-parser
+  - perl
+  - homer
+  - ucsc-bigwigsummary
+  - deeptools
+prefix: /home/ubuntu/data/miniconda3/envs/fcn
