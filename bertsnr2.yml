@@ -1,0 +1,9 @@
+name: bertsnr2
+channels:
+  - anaconda
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.7
+prefix: /home/ubuntu/data/miniconda3/envs/bertsnr

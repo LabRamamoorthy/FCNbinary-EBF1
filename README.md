@@ -2,20 +2,30 @@
 
 ## 1. Environment setup
 
-#### 1.1 Create and activate a new virtual environment
+## Recreating the Conda Environment
 
+You can run the below command to recreate the Conda environment from the `bertsnr2.yml` file:
+
+```bash
+conda env create -f bertsnr2.yml
 ```
-conda create -n bertsnr2 python=3.7
+
+Incase you want to name the environment `bertsnr2`:
+
+```bash
+conda env create -n bertsnr2 -f bertsnr.yml
+```
+
+Activate the environment:
+
+```bash
 conda activate bertsnr2
 ```
 
-#### 1.2 Install the package and other requirements
+To verify that the environment was created successfully:
 
-(Required)
-
-```
-cd BertSNR2
-conda install --file requirements.txt
+```bash
+conda env list
 ```
 
 ## 2. Model pipeline
