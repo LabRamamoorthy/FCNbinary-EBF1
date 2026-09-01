@@ -17,6 +17,32 @@
 * `bedtools`
 * Reference genome FASTA file
 
+## Recreating the Conda Environment
+
+You can run the below command to recreate the Conda environment from the `fcnbinary.yml` file:
+
+```bash
+conda env create -f fcnbinary.yml
+```
+
+Incase you want to name the environment `fcnbinary`:
+
+```bash
+conda env create -n fcnbinary -f fcnbinary.yml
+```
+
+Activate the environment:
+
+```bash
+conda activate fcnbinary
+```
+
+To verify that the environment was created successfully:
+
+```bash
+conda env list
+```
+
 Download the required genome FASTA file from the [UCSC Genome Browser downloads](https://hgdownload.soe.ucsc.edu/downloads.html), unzip it, and place it in the `Genome/` directory.
 
 For example:
@@ -54,9 +80,9 @@ python bed2signal.py -d <> -n <> -s <>
 | `-s`                         | Random seed (default is `666`)                                                             |
 | `-t`, `--threshold`          | Threshold for binary classification of signal after log10 normalization (default is `0.1`) |
 | `--out_dir`                  | Required output directory                                                                  |
-| `--seqs_bed`                 | Required BED file containing peak coordinates                                              |
-| `--pvalue_file`              | Required BigWig file containing the signal                                                 |
-| `--additional_feature_files` | Optional additional BigWig feature files                                                   |
+| `--seqs_bed`                 | Required BED file containing peak coordinates (input file)                                 |
+| `--pvalue_file`              | Required BigWig file containing the signal (ChIP signal)                                   |
+| `--additional_feature_files` | Optional additional BigWig feature files (ATAC signal)                                     |
 | `--genome_fasta`             | Required path to the genome FASTA file                                                     |
 | `--chrom_sizes`              | Required path to the chromosome sizes file                                                 |
 | `--seq_len`                  | Sequence length (default is `1001`)                                                        |
@@ -65,9 +91,17 @@ python bed2signal.py -d <> -n <> -s <>
 
 ```bash
 python bed2signal.py \
-    -d /your_path/FCNsignal/EBF \
+    -d EBF \
     -n EBF \
-    -s 666
+    -s 666 \
+    -t 0.1 \
+    --out_dir EBF/data_binary_0.1 \
+    --seqs_bed EBF/WT2_0based.bed \
+    --pvalue_file EBF/p-value.bw \
+    --additional_feature_files EBF/ATAC2.bw \
+    --genome_fasta Genome/mm9.fa \
+    --chrom_sizes Genome/mm9.chrom.sizes
+    --seq_len 1001
 ```
 
 ---
@@ -96,20 +130,20 @@ python run_signal.py -d <> -n <> -g <> -s <> -b <> -e <> -c <>
 
 ```bash
 python run_signal.py \
-    -d /your_path/FCNsignal/EBF/data \
+    -d EBF/data_binary_0.1 \
     -n EBF \
     -g 0 \
     -s 666 \
     -b 500 \
     -e 50 \
-    -c /your_path/FCNsignal/models/EBF
+    -c models/unet_0.1
 ```
 
 ---
 
 # Model Classification
 
-Test a trained FCNsignal model on the specified test data:
+Test a trained FCNsignal model performance on the specified test data. The output is Accuracy, Precision, Recall, F1-score, AUC, AUPR, Confusion matrix .
 
 ```bash
 python test_signal.py -d <> -n <> -g <> -c <>
@@ -123,15 +157,20 @@ python test_signal.py -d <> -n <> -g <> -c <>
 | `-n`     | Name of the specified dataset, e.g. `EBF`                                   |
 | `-g`     | GPU device ID (default is `0`)                                               |
 | `-c`     | Path to the trained model, e.g. `/your_path/FCNsignal/models/EBF   |
+| `-o`     | Path to save results  |
+| `-t`     | Threshold for binary classification (default is `0.5`)  |
+| `-m`     | Minimal number of consecutive bases for sequence-level classification (default is `12`) |
+
 
 ### Example
 
 ```bash
 python test_signal.py \
-    -d /your_path/FCNsignal/EBF/data \
+    -d EBF/data_binary_0.1 \
     -n EBF \
     -g 0 \
-    -c /your_path/FCNsignal/models/EBF
+    -c models/unet_0.1
+    -o results/unet_0.1_run1
 ```
 
 ---
@@ -151,27 +190,33 @@ python TFBS_locating.py -i <> -n <> -g <> -t <> -w <> -c <>
 | `-i`     | Input BED file, e.g. `/your_path/FCNsignal/input.bed`                      |
 | `-n`     | Name of the specified dataset, e.g. `EBF`                                 |
 | `-g`     | GPU device ID (default is `0`)                                             |
-| `-t`     | Threshold used to determine binding regions (default is `1.5`)             |
+| `-t`     | Threshold for binary classification (default is `0.5`)             |
 | `-w`     | Length of binding regions (default is `60`)                                |
 | `-c`     | Path to the trained model, e.g. `/your_path/FCNsignal/models/EBF` |
+| `--features`     | Paths to bigWig files for additional features |
+| `--smooth`     | Apply smoothing to features |
+| `--chrom_sizes`     | Chromosome sizes file (default is `Genome/mm9.chrom.sizes`) |
 
 ### Example
 
 ```bash
 python TFBS_locating.py \
-    -i /your_path/FCNsignal/input.bed \
+    -i input.bed \
     -n EBF \
     -g 0 \
-    -t 1.5 \
+    -t 0.5 \
     -w 60 \
-    -c /your_path/FCNsignal/models/EBF
+    -c models/unet_0.1 \
+    --features EBF\ATAC2.bw
+    --smooth 
+    --chrom_sizes Genome/mm9.chrom.sizes
 ```
 
 
 
 # Test Prediction
 
-The `test_prediction.py` script provides a running model inference directly on BED regions.
+The `test_prediction.py` script provides a running model inference directly on BED regions classifying the input sequesces into with_peak(has TF) and without_peak(doesn't have TF).
 
 ## Command
 
@@ -210,9 +255,9 @@ python test_prediction.py \
     --chrom Genome/mm9.chrom.sizes \
     --fasta Genome/mm9.fa \
     --bed test_predict/input/pro-B_Rep1_Chip.bed \
-    --model models/adipo_1000_0.1/model_best_ebf.pth \
+    --model models/unet_0.1/model_best_ebf.pth \
     --features EBF/ATAC2.bw \
-    --output test_predict/output6/afcn_Abcell_chip \
+    --output test_predict/output/bcell_chip \
     --threshold 0.5 \
     --peak-bps 12 \
     --window 15 \
@@ -270,7 +315,7 @@ The script accepts the TRUE BED file, PRED BED file, and output directory from t
 ## Command
 
 ```bash
-./compare.sh <TRUE> <PRED> <OUTDIR>
+bash compare.sh <TRUE> <PRED> <OUTDIR>
 ```
 
 ### Arguments
@@ -284,10 +329,8 @@ The script accepts the TRUE BED file, PRED BED file, and output directory from t
 ## Example
 
 ```bash
-./compare.sh \
-    test_predict/input/true.bed \
-    test_predict/output6/predictions.bed \
-    test_predict/output6/bfcn_op9_7/com_adipo_neg
+bash compare_bed.sh test_predict/Ground_truth/chip_prob/common.bed test_predict/output6/bfcn_Aadipo/test_with_peak.tsv 
+
 ```
 # FusedModel
 
@@ -325,6 +368,31 @@ The fused model requires the packages used by both the FCNsignal and BERTSNR2 co
 
 Install the required Python packages according to your environment.
 
+## Recreating the Conda Environment
+
+You can run the below command to recreate the Conda environment from the `fcnbinary.yml` file:
+
+```bash
+conda env create -f fused.yml
+```
+
+Incase you want to name the environment `fused`:
+
+```bash
+conda env create -n fused -f fused.yml
+```
+
+Activate the environment:
+
+```bash
+conda activate fused
+```
+
+To verify that the environment was created successfully:
+
+```bash
+conda env list
+```
 ---
 
 # 1. Data Preparation
@@ -369,12 +437,26 @@ Additional options can be used to control sequence sampling and FCN signal gener
 | Argument          | Default | Description                                                                                                         |
 | ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
 | `--bigwig_file`   | `None`  | Primary BigWig signal used to generate FCN per-nucleotide labels. If omitted, FCN labels default to BERTSNR2 labels |
-| `--chrom_sizes`   | `None`  | Chromosome sizes file. Required when `--bigwig_file` is specified                                                   |
+| `--chrom_sizes`   | `None`  | Chromosome sizes file.                                                    |
 | `--smooth`        | `True`  | Apply moving-average smoothing to the BigWig signal                                                                 |
 | `--no_smooth`     | —       | Disable BigWig signal smoothing                                                                                     |
 | `--smooth_window` | `15`    | Moving-average smoothing window                                                                                     |
 | `--fcn_threshold` | `0.1`   | Log10 signal threshold used to generate binary FCN labels                                                           |
+| `--additional_bigwigs` | `None`   | Path to additional signal (Eg.ATAC)                                                           |
 
+## Example
+```bash
+python fused_dataset.py 
+    --bed_file fused_dataset/EBF.bed 
+    --genome_file Genome/mm9.fa \
+    --output_path fused_dataset/EBF_500/ \
+    --seq_length 500 \
+    --bigwig_file EBF/p-value.bw \
+    --chrom_sizes Genome/mm9.chrom.sizes \
+    --smooth \
+    --fcn_threshold 0.1 \
+    --additional_bigwigs EBF/ATAC2.bw
+```
 
 ---
 
@@ -435,6 +517,15 @@ The dataset directory supplied with `-d` is expected to contain:
 <data_dir>/fcn/train.npz
 ```
 
+## Example
+```bash
+python fusedRun_signal.py 
+    -d fused_dataset/EBF_500
+    -g 0 /
+    -s 42 /
+    -c fusedModels/EBF_500_ATAC
+    --bert_path data/dnabert2
+```
 ---
 
 # 3. Model Evaluation
@@ -632,31 +723,32 @@ Specify the model location using:
 
 # 4. Fused Model Prediction
 
-The `test_prediction.py` script performs inference using the trained FusedModel on arbitrary genomic regions provided in a BED file.
+The `fusedTestPrediction.py` script performs inference using the trained **FusedModel** on arbitrary genomic regions provided in a BED file.
 
-The model combines the sequence representation from **BERTSNR2** with the FCNsignalMod component and can optionally use additional BigWig features.
+The model combines the sequence representation from **BERTSNR2** with the **FCNsignalMod** component and can optionally use additional BigWig features.
 
 ## Command
 
 ```bash
 python fusedTestPrediction.py \
-    --fasta <> \
-    --bed <> \
-    --model <> \
-    --bert <> \
-    --output <> \
-    --extra-bigwig \
-    --threshold <> \
-    --peak-bps <> \
-    --max-len <> \
+    --fasta <FASTA_FILE> \
+    --bed <BED_FILE> \
+    --model <MODEL_FILE> \
+    --bert <DNABERT2_PATH> \
+    --output <OUTPUT_DIR> \
+    --extra-bigwig <BIGWIG_FILE> \
+    --threshold <THRESHOLD> \
+    --peak-bps <PEAK_BPS> \
+    --max-len <MAX_LEN> \
     --smooth \
-    --smooth-window <>
+    --smooth-window <SMOOTH_WINDOW>
+```
 
-# Prediction Arguments
+## Prediction Arguments
 
 The prediction script accepts the following required and optional arguments.
 
-## Required Arguments
+### Required Arguments
 
 | Argument   | Description                                               |
 | ---------- | --------------------------------------------------------- |
@@ -666,24 +758,26 @@ The prediction script accepts the following required and optional arguments.
 | `--bert`   | Path to the local DNABERT-2 model/tokenizer.              |
 | `--output` | Output directory where prediction results will be stored. |
 
-## Optional Arguments
+### Optional Arguments
 
 | Argument          | Default | Description                                                                                        |
-| ----------------- | ------: | -------------------------------------------------------------------------------------------------- |
-| `--extra-bigwig`  |  `None` | Optional BigWig feature files used as additional input features. Multiple files can be supplied.   |
-| `--threshold`     |   `0.5` | Classification threshold used to convert model probabilities into binary predictions.              |
-| `--peak-bps`      |    `10` | Minimum number of consecutive positive bases required to classify a sequence as containing a peak. |
-| `--max-len`       |   `512` | Maximum sequence length used by the BERT component.                                                |
-| `--smooth`        |  `True` | Enable or disable smoothing of BigWig features.                                                    |
-| `--smooth-window` |    `15` | Window size used for moving-average smoothing.                                                     |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `--extra-bigwig`  | `None`  | Optional BigWig feature files used as additional input features. Multiple files can be supplied.   |
+| `--threshold`     | `0.5`   | Classification threshold used to convert model probabilities into binary predictions.              |
+| `--peak-bps`      | `10`    | Minimum number of consecutive positive bases required to classify a sequence as containing a peak. |
+| `--max-len`       | `512`   | Maximum sequence length used by the BERT component.                                                |
+| `--smooth`        | `True`  | Enable or disable smoothing of BigWig features.                                                    |
+| `--smooth-window` | `15`    | Window size used for moving-average smoothing.                                                     |
 
+## Example
 
-
-
-
-
-
-
-
-
+```bash
+python fusedTestPrediction.py \
+    --fasta Genome/mm9.fa \
+    --bed test_predict/input/pro-B_Rep1_Chip.bed \
+    --model checkpoints/fused_model/model_best.pth \
+    --bert data/dnabert2 \
+    --output test_predict/output \
+    --extra-bigwig EBF/ATAC2.bw
+```
 
