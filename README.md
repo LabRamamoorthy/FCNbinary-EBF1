@@ -332,6 +332,50 @@ bash compare.sh <TRUE> <PRED> <OUTDIR>
 bash compare_bed.sh test_predict/Ground_truth/chip_prob/common.bed test_predict/output6/bfcn_Aadipo/test_with_peak.tsv 
 
 ```
+# 5. HOMER Motif Analysis
+
+HOMER can be used to identify known motifs in the genomic regions predicted by FusedModel.
+
+For example, `Pred_only.bed` contains predicted regions that are not present in the corresponding true regions. HOMER can be used to search these regions for motifs similar to a specified motif.
+
+## Command
+
+```bash
+findMotifsGenome.pl \
+    <INPUT_BED> \
+    mm9 \
+    <OUTPUT_PREFIX> \
+    -find <MOTIF_FILE> \
+    -size given \
+    > <OUTPUT_BED>
+```
+
+### Example
+
+For the `Pred_only.bed` regions generated from a specific prediction run:
+
+```bash
+findMotifsGenome.pl \
+    test_predict/output/unet_0.1/bed_WT2/Pred_only.bed \
+    mm9 \
+    test_predict/output/unet_0.1/homer/Pred_only_test \
+    -find motif/motif1.similar2.motif \
+    -size given \
+    > test_predict/output/unet_0.1/homer/Pred_only_test.bed
+```
+
+## Arguments
+
+| Argument             | Description                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `<INPUT_BED>`        | BED file containing genomic regions to be analyzed.                                                   |
+| `mm9`                | Genome assembly used for the analysis. Replace this with the appropriate genome assembly if required. |
+| `<OUTPUT_PREFIX>`    | Prefix/path used by HOMER for output files.                                                           |
+| `-find <MOTIF_FILE>` | HOMER motif file containing the motif(s) to search for.                                               |
+| `-size given`        | Uses the original size of each BED region rather than extracting a fixed-size region.                 |
+| `> <OUTPUT_BED>`     | Redirects the motif-search results to the specified output file.                                      |
+
+
 # FusedModel
 
 FusedModel is a deep learning framework for **base-resolution transcription factor binding site (TFBS) prediction** that combines:
