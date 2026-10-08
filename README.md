@@ -133,7 +133,7 @@ python run_signal.py \
     -d EBF/data_binary_0.1 \
     -n EBF \
     -g 0 \
-    -s 666 \
+    -s 42 \
     -b 500 \
     -e 50 \
     -c models/unet_0.1
